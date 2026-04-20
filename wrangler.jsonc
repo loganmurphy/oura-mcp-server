@@ -16,6 +16,10 @@
   ],
 
   "vars": {
+    // Set NO_CACHE="true" to disable D1 caching for this entire deployment.
+    // Useful for a dedicated debug/staging worker. For per-request bypass,
+    // use the ?no_cache query param or pass skip_cache: true on a tool call.
     // OURA_API_TOKEN is set via: wrangler secret put OURA_API_TOKEN
+    "NO_CACHE": ""
   }
 }

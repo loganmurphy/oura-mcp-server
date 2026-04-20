@@ -24,6 +24,7 @@ import { ACTIVITY_TOOLS, SLEEP_TOOLS, type ToolDef } from "./tools";
 export interface Env {
   OURA_API_TOKEN: string;
   DB: D1Database;
+  NO_CACHE?: string; // set to "true" in wrangler.jsonc vars or .dev.vars to disable caching deployment-wide
 }
 
 // ---------------------------------------------------------------------------
@@ -304,7 +305,7 @@ async function handleMcp(
   ctx: ExecutionContext,
   tools: ToolDef[],
   serverName: string,
-  forceSkipCache = false, // set via ?no_cache query param
+  forceSkipCache = false,
 ): Promise<Response> {
   if (!env.OURA_API_TOKEN) {
     return jsonResponse(err(null, -32603, "OURA_API_TOKEN secret not configured"), 500);
@@ -380,7 +381,7 @@ export default {
 
     const url = new URL(request.url);
     const { pathname } = url;
-    const noCache = url.searchParams.has("no_cache");
+    const noCache = url.searchParams.has("no_cache") || env.NO_CACHE === "true";
 
     if (pathname === "/mcp/sleep") {
       if (request.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);

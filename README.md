@@ -37,7 +37,10 @@ pnpm install
 # Generate Worker environment types (derives from wrangler.jsonc)
 pnpm cf-typegen
 
-# Add your Oura token to local secrets
+# Add your Oura token (and any optional overrides) to local secrets
+# .dev.vars contents:
+#   OURA_API_TOKEN=your_token_here
+#   NO_CACHE=true        # optional — disables D1 caching for this local session
 echo "OURA_API_TOKEN=your_token_here" > .dev.vars
 
 # Apply the D1 schema locally (Miniflare, no Cloudflare account needed)
