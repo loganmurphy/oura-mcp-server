@@ -52,6 +52,10 @@ POST /mcp/sleep or /mcp/activity
 
 Multi-session days (e.g. nap + main sleep in `sleep_sessions`) are stored as an array under one `date_key` row via `groupByDay()`.
 
+**Empty responses are never cached.** Oura processes session data after waking — the daily score syncs quickly but full HRV/stage/HR data can lag by several hours. An empty `data: []` response means "not ready yet", not "no data", so caching it would serve stale emptiness until TTL expires.
+
+**Cache bypass:** Every cacheable tool accepts a `skip_cache: true` argument to force a live Oura fetch regardless of what's in D1. Use this when a user reports missing data that should exist (e.g. today's sleep session not showing up). The `?no_cache` query param on the endpoint URL does the same for all tools in that request — useful during development (`curl http://localhost:8787/mcp/sleep?no_cache ...`). Neither bypass writes to cache.
+
 ### Tool split
 
 Claude Desktop enforces a per-MCP-server tool cap (~5). Tools are split into two endpoints served by the same Worker:
