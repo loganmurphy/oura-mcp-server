@@ -8,6 +8,14 @@ export interface ToolDef {
   };
 }
 
+// Appended to every cacheable tool so Claude can bypass stale cache on demand.
+const SKIP_CACHE_PROP = {
+  skip_cache: {
+    type: "boolean",
+    description: "Set to true to bypass the D1 cache and fetch fresh data directly from Oura. Useful when data hasn't synced yet (e.g. this morning's sleep session).",
+  },
+} as const;
+
 /**
  * Sleep & Recovery tools — served at /mcp/sleep
  *
@@ -19,7 +27,7 @@ export const SLEEP_TOOLS: ToolDef[] = [
   {
     name: "oura_personal_info",
     description: "Get the user's Oura personal info: age, weight, height, biological sex, email.",
-    inputSchema: { type: "object", properties: {} },
+    inputSchema: { type: "object", properties: { ...SKIP_CACHE_PROP } },
   },
   {
     name: "oura_daily_sleep",
@@ -30,6 +38,7 @@ export const SLEEP_TOOLS: ToolDef[] = [
       properties: {
         start_date: { type: "string", description: "Start date in YYYY-MM-DD format (default: 7 days ago)" },
         end_date: { type: "string", description: "End date in YYYY-MM-DD format (default: today)" },
+        ...SKIP_CACHE_PROP,
       },
     },
   },
@@ -42,6 +51,7 @@ export const SLEEP_TOOLS: ToolDef[] = [
       properties: {
         start_date: { type: "string", description: "Start date in YYYY-MM-DD format (default: 7 days ago)" },
         end_date: { type: "string", description: "End date in YYYY-MM-DD format (default: today)" },
+        ...SKIP_CACHE_PROP,
       },
     },
   },
@@ -54,6 +64,7 @@ export const SLEEP_TOOLS: ToolDef[] = [
       properties: {
         start_date: { type: "string", description: "Start date in YYYY-MM-DD format (default: 7 days ago)" },
         end_date: { type: "string", description: "End date in YYYY-MM-DD format (default: today)" },
+        ...SKIP_CACHE_PROP,
       },
     },
   },
@@ -66,6 +77,7 @@ export const SLEEP_TOOLS: ToolDef[] = [
       properties: {
         start_date: { type: "string", description: "Start date in YYYY-MM-DD format (default: 7 days ago)" },
         end_date: { type: "string", description: "End date in YYYY-MM-DD format (default: today)" },
+        ...SKIP_CACHE_PROP,
       },
     },
   },
@@ -88,6 +100,7 @@ export const ACTIVITY_TOOLS: ToolDef[] = [
       properties: {
         start_date: { type: "string", description: "Start date in YYYY-MM-DD format (default: 7 days ago)" },
         end_date: { type: "string", description: "End date in YYYY-MM-DD format (default: today)" },
+        ...SKIP_CACHE_PROP,
       },
     },
   },
@@ -118,6 +131,7 @@ export const ACTIVITY_TOOLS: ToolDef[] = [
       properties: {
         start_date: { type: "string", description: "Start date in YYYY-MM-DD format (default: 7 days ago)" },
         end_date: { type: "string", description: "End date in YYYY-MM-DD format (default: today)" },
+        ...SKIP_CACHE_PROP,
       },
     },
   },
@@ -129,6 +143,7 @@ export const ACTIVITY_TOOLS: ToolDef[] = [
       properties: {
         start_date: { type: "string", description: "Start date in YYYY-MM-DD format (default: 7 days ago)" },
         end_date: { type: "string", description: "End date in YYYY-MM-DD format (default: today)" },
+        ...SKIP_CACHE_PROP,
       },
     },
   },

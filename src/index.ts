@@ -166,13 +166,17 @@ async function handleDateRangeTool(
   token: string,
   db: D1Database,
   ctx: ExecutionContext,
+  skipCache = false,
 ): Promise<Response> {
   const start = (args["start_date"] as string | undefined) ?? defaultStart();
   const end   = (args["end_date"]   as string | undefined) ?? defaultEnd();
   const dates = datesInRange(start, end);
   const metric = toolName.replace("oura_", "");
 
-  const cache: CacheResult = await getCachedRange(db, metric, dates);
+  // Skip cache read when explicitly requested or forced via ?no_cache query param
+  const cache: CacheResult = skipCache
+    ? { hits: new Map(), misses: dates }
+    : await getCachedRange(db, metric, dates);
 
   // ── Fast path: 100% cache hit ──────────────────────────────────────────
   if (cache.misses.length === 0) {
@@ -231,9 +235,13 @@ async function handleDateRangeTool(
         }, null, 2) }],
       })));
 
-      // 5. Persist fresh items to D1 (non-blocking)
+      // 5. Persist fresh items to D1 (non-blocking).
+      // Skip caching empty responses — an empty array usually means the data
+      // hasn't synced from the ring yet, not that there's genuinely nothing there.
       const toCache = [...freshByDay.entries()].map(([dateKey, data]) => ({ dateKey, data }));
-      ctx.waitUntil(setCachedRange(db, metric, toCache));
+      if (toCache.length > 0 && !skipCache) {
+        ctx.waitUntil(setCachedRange(db, metric, toCache));
+      }
 
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -257,9 +265,10 @@ async function handleSingletonTool(
   token: string,
   db: D1Database,
   ctx: ExecutionContext,
+  skipCache = false,
 ): Promise<Response> {
   const metric = toolName.replace("oura_", "");
-  const cached = await getCachedSingleton(db, metric);
+  const cached = skipCache ? null : await getCachedSingleton(db, metric);
   if (cached !== null) {
     return jsonResponse(ok(id, {
       content: [{ type: "text", text: JSON.stringify({ ...cached as object, _cache: "hit" }, null, 2) }],
@@ -295,6 +304,7 @@ async function handleMcp(
   ctx: ExecutionContext,
   tools: ToolDef[],
   serverName: string,
+  forceSkipCache = false, // set via ?no_cache query param
 ): Promise<Response> {
   if (!env.OURA_API_TOKEN) {
     return jsonResponse(err(null, -32603, "OURA_API_TOKEN secret not configured"), 500);
@@ -330,14 +340,15 @@ async function handleMcp(
       if (!toolName) return jsonResponse(err(id, -32602, "Missing tool name"), 400);
 
       try {
+        const skipCache = forceSkipCache || toolArgs["skip_cache"] === true;
         if (toolName === "oura_personal_info") {
-          return await handleSingletonTool(id, toolName, env.OURA_API_TOKEN, env.DB, ctx);
+          return await handleSingletonTool(id, toolName, env.OURA_API_TOKEN, env.DB, ctx, skipCache);
         }
         if (toolName === "oura_heart_rate") {
           return await handleHeartRateTool(id, toolArgs, env.OURA_API_TOKEN);
         }
         if (DATE_KEYED_TOOLS.has(toolName)) {
-          return await handleDateRangeTool(id, toolName, toolArgs, env.OURA_API_TOKEN, env.DB, ctx);
+          return await handleDateRangeTool(id, toolName, toolArgs, env.OURA_API_TOKEN, env.DB, ctx, skipCache);
         }
         throw new Error(`Unknown tool: ${toolName}`);
       } catch (e) {
@@ -367,16 +378,18 @@ export default {
       return new Response(null, { headers: CORS });
     }
 
-    const { pathname } = new URL(request.url);
+    const url = new URL(request.url);
+    const { pathname } = url;
+    const noCache = url.searchParams.has("no_cache");
 
     if (pathname === "/mcp/sleep") {
       if (request.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
-      return handleMcp(request, env, ctx, SLEEP_TOOLS, "oura-sleep-recovery");
+      return handleMcp(request, env, ctx, SLEEP_TOOLS, "oura-sleep-recovery", noCache);
     }
 
     if (pathname === "/mcp/activity") {
       if (request.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
-      return handleMcp(request, env, ctx, ACTIVITY_TOOLS, "oura-activity-wellness");
+      return handleMcp(request, env, ctx, ACTIVITY_TOOLS, "oura-activity-wellness", noCache);
     }
 
     if (pathname === "/" || pathname === "/health") {

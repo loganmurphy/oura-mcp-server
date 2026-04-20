@@ -21,7 +21,7 @@ Tools are split across two MCP server endpoints to stay within Claude Desktop's 
 | `/mcp/sleep` | `personal_info`, `daily_sleep`, `sleep_sessions`, `daily_readiness`, `daily_spo2` |
 | `/mcp/activity` | `daily_activity`, `heart_rate`, `workouts`, `daily_stress` |
 
-On a partial cache hit the worker streams the cached portion to the client immediately via SSE, fetches only the missing date range from Oura, then sends the merged complete result.
+On a partial cache hit the worker streams the cached portion to the client immediately via SSE, fetches only the missing date range from Oura, then sends the merged complete result. Empty responses (data not yet synced from the ring) are never cached. Pass `skip_cache: true` on any tool call to bypass the cache entirely.
 
 ## Requirements
 
@@ -150,6 +150,12 @@ All date params are optional and default to the last 7 days (`YYYY-MM-DD` format
 lsof -ti :8787 | xargs kill -9
 pnpm dev
 ```
+
+**Sleep/activity data missing or empty (data not synced yet)**
+- Oura processes session data after you wake up — the daily score arrives quickly but full HRV, stage breakdown, and heart rate data can take several hours
+- Ask Claude to re-fetch with the cache bypassed: *"pull my sleep sessions for today with skip_cache: true"*
+- Or bypass cache for an entire endpoint at the URL level (useful during testing): append `?no_cache` to the MCP endpoint in `claude_desktop_config.json`, e.g. `.../mcp/sleep?no_cache`
+- Empty responses are never cached, so retrying later will always hit Oura fresh
 
 **Oura API returning 401**
 - Personal Access Tokens expire — generate a new one at [cloud.ouraring.com/personal-access-tokens](https://cloud.ouraring.com/personal-access-tokens) and update your `.dev.vars` or Worker secret
