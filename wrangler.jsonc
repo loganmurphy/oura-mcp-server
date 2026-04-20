@@ -1,0 +1,21 @@
+{
+  "name": "oura-mcp-server",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-04-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // D1 cache database
+  // After running `wrangler login` + `wrangler d1 create oura-cache`,
+  // paste the returned database_id below.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "oura-cache",
+      "database_id": "REPLACE_WITH_DATABASE_ID"
+    }
+  ],
+
+  "vars": {
+    // OURA_API_TOKEN is set via: wrangler secret put OURA_API_TOKEN
+  }
+}
