@@ -27,7 +27,7 @@ On a partial cache hit the worker streams the cached portion to the client immed
 
 - [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier is fine)
 - [Oura developer account](https://cloud.ouraring.com/personal-access-tokens) with a Personal Access Token
-- Node.js ≥ 18 and pnpm
+- Node.js 22 LTS and pnpm 10 — [Volta](https://volta.sh) is recommended to manage these automatically (versions are pinned in `package.json`)
 
 ## Local development
 
@@ -122,6 +122,43 @@ All date params are optional and default to the last 7 days (`YYYY-MM-DD` format
 | `oura_heart_rate` | `start_datetime`, `end_datetime` | Continuous BPM readings (ISO 8601) |
 | `oura_workouts` | `start_date`, `end_date` | Session type, duration, calories, HR |
 | `oura_daily_stress` | `start_date`, `end_date` | Stress, recovery, ruggedness scores |
+
+## Troubleshooting
+
+**Tools not appearing in Claude Desktop**
+- Fully quit Claude Desktop (Cmd+Q, not just close the window) and relaunch — it only loads the MCP tool list at startup
+- Check the config file path is exactly `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Make sure you saved the file and it's valid JSON — a trailing comma will silently break it
+
+**"OURA_API_TOKEN secret not configured" error**
+- For local dev: confirm `.dev.vars` exists in the project root with `OURA_API_TOKEN=your_token_here`
+- The dev server must be restarted after creating or editing `.dev.vars`
+- For production: run `npx wrangler secret put OURA_API_TOKEN` and redeploy
+
+**Claude can't connect / "MCP server disconnected"**
+- For local dev: confirm `pnpm dev` is running in the project directory
+- Test the server is reachable: `curl http://localhost:8787/health`
+- `mcp-remote` requires Node.js — confirm with `node --version` (needs 22 LTS; use [Volta](https://volta.sh) to match the pinned version)
+- Try clearing the mcp-remote cache: `rm -rf ~/.mcp-remote`
+
+**Only 5 tools showing instead of 9**
+- This is expected — Claude Desktop has a per-server tool cap, so tools are intentionally split across two servers (`oura-sleep` and `oura-activity`)
+- Confirm both entries exist in `claude_desktop_config.json` and restart Claude Desktop
+
+**Port 8787 already in use**
+```bash
+lsof -ti :8787 | xargs kill -9
+pnpm dev
+```
+
+**Oura API returning 401**
+- Personal Access Tokens expire — generate a new one at [cloud.ouraring.com/personal-access-tokens](https://cloud.ouraring.com/personal-access-tokens) and update your `.dev.vars` or Worker secret
+
+---
+
+## Roadmap
+
+- **Oura OAuth** — the server currently uses a Personal Access Token (personal use only). A future version will support the full Oura OAuth flow so this can be shared as a general-purpose server. The PAT approach is intentional for now to avoid incurring OAuth infrastructure costs.
 
 ## Tutorial
 
