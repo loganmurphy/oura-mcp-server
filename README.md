@@ -1,2 +1,140 @@
 # oura-mcp-server
-Oura MCP Server — A Cloudflare Worker that connects your Oura Ring to any MCP-compatible AI assistant. Ask questions about your sleep, recovery, activity, and workouts in plain language. Deployed in minutes, runs on your own Cloudflare account, your data never leaves your control.
+
+A lightweight [Model Context Protocol](https://modelcontextprotocol.io) server that exposes your [Oura Ring](https://ouraring.com) data as tools for Claude. Runs on Cloudflare Workers with a D1 cache layer for fast repeated queries.
+
+## Architecture
+
+```
+Claude Desktop
+     │  stdio
+  mcp-remote (npx)
+     │  HTTP POST /mcp/sleep  or  /mcp/activity
+Cloudflare Worker
+     ├─ D1 cache  (per-day TTL: 1h today / 6h yesterday / 24h older)
+     └─ Oura API  (fetched only for cache misses)
+```
+
+Tools are split across two MCP server endpoints to stay within Claude Desktop's per-server tool limit:
+
+| Endpoint | Tools |
+|---|---|
+| `/mcp/sleep` | `personal_info`, `daily_sleep`, `sleep_sessions`, `daily_readiness`, `daily_spo2` |
+| `/mcp/activity` | `daily_activity`, `heart_rate`, `workouts`, `daily_stress` |
+
+On a partial cache hit the worker streams the cached portion to the client immediately via SSE, fetches only the missing date range from Oura, then sends the merged complete result.
+
+## Requirements
+
+- [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier is fine)
+- [Oura developer account](https://cloud.ouraring.com/personal-access-tokens) with a Personal Access Token
+- Node.js ≥ 18 and pnpm
+
+## Local development
+
+```bash
+pnpm install
+
+# Generate Worker environment types (derives from wrangler.jsonc)
+pnpm cf-typegen
+
+# Add your Oura token to local secrets
+echo "OURA_API_TOKEN=your_token_here" > .dev.vars
+
+# Apply the D1 schema locally (Miniflare, no Cloudflare account needed)
+npx wrangler d1 execute oura-cache --local --file=./migrations/001_init.sql
+
+# Start the dev server on http://localhost:8787
+pnpm dev
+```
+
+### Smoke test
+
+```bash
+# List tools
+curl -s -X POST http://localhost:8787/mcp/sleep \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq '.result.tools[].name'
+
+# Call a tool
+curl -s -X POST http://localhost:8787/mcp/sleep \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oura_daily_readiness","arguments":{"start_date":"2026-04-14","end_date":"2026-04-20"}}}' | jq .
+```
+
+## Deploy to Cloudflare
+
+```bash
+# 1. Authenticate
+npx wrangler login
+
+# 2. Create the D1 database — copy the printed database_id
+npx wrangler d1 create oura-cache
+
+# 3. Paste the database_id into wrangler.jsonc
+
+# 4. Apply the schema to production
+npx wrangler d1 execute oura-cache --remote --file=./migrations/001_init.sql
+
+# 5. Set your Oura token as a Worker secret
+npx wrangler secret put OURA_API_TOKEN
+
+# 6. Deploy
+pnpm deploy
+```
+
+Your Worker will be live at `https://oura-mcp-server.<your-subdomain>.workers.dev`.
+
+## Connect to Claude Desktop
+
+Add both MCP servers to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "oura-sleep": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://oura-mcp-server.<your-subdomain>.workers.dev/mcp/sleep"]
+    },
+    "oura-activity": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://oura-mcp-server.<your-subdomain>.workers.dev/mcp/activity"]
+    }
+  }
+}
+```
+
+For local dev, use `http://localhost:8787/mcp/sleep` etc. and keep `pnpm dev` running.
+
+Restart Claude Desktop after any config change.
+
+## Tool reference
+
+All date params are optional and default to the last 7 days (`YYYY-MM-DD` format).
+
+| Tool | Params | Returns |
+|---|---|---|
+| `oura_personal_info` | — | Age, weight, height, biological sex |
+| `oura_daily_sleep` | `start_date`, `end_date` | Sleep score + contributors |
+| `oura_sleep_sessions` | `start_date`, `end_date` | Sleep stages, HRV, HR, breathing, temp |
+| `oura_daily_readiness` | `start_date`, `end_date` | Readiness score + contributors |
+| `oura_daily_spo2` | `start_date`, `end_date` | Blood oxygen saturation |
+| `oura_daily_activity` | `start_date`, `end_date` | Steps, calories, activity minutes |
+| `oura_heart_rate` | `start_datetime`, `end_datetime` | Continuous BPM readings (ISO 8601) |
+| `oura_workouts` | `start_date`, `end_date` | Session type, duration, calories, HR |
+| `oura_daily_stress` | `start_date`, `end_date` | Stress, recovery, ruggedness scores |
+
+## Tutorial
+
+> 📸 _Screenshots and walkthrough coming soon._
+
+## Project structure
+
+```
+src/
+  index.ts       Worker entry — MCP routing + SSE streaming
+  cache.ts       D1 cache layer (per-day TTL, partial hit detection)
+  oura.ts        Oura API client
+  tools.ts       MCP tool definitions (SLEEP_TOOLS / ACTIVITY_TOOLS)
+migrations/
+  001_init.sql   D1 schema
+```
