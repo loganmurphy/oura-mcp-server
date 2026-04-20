@@ -17,6 +17,11 @@ npx wrangler d1 execute oura-cache --local --file=./migrations/001_init.sql   # 
 npx wrangler d1 execute oura-cache --remote --file=./migrations/001_init.sql  # production
 ```
 
+`wrangler.jsonc` is gitignored — copy from the template and fill in your D1 `database_id`:
+```bash
+cp wrangler.example.jsonc wrangler.jsonc
+```
+
 Local secrets go in `.dev.vars` (gitignored):
 ```
 OURA_API_TOKEN=your_token_here

@@ -32,6 +32,9 @@ On a partial cache hit the worker streams the cached portion to the client immed
 ## Local development
 
 ```bash
+# Copy the config template and fill in your own values (see Deploy section)
+cp wrangler.example.jsonc wrangler.jsonc
+
 pnpm install
 
 # Generate Worker environment types (derives from wrangler.jsonc)
@@ -73,7 +76,7 @@ npx wrangler login
 # 2. Create the D1 database — copy the printed database_id
 npx wrangler d1 create oura-cache
 
-# 3. Paste the database_id into wrangler.jsonc
+# 3. Paste the database_id into wrangler.jsonc (created from wrangler.example.jsonc)
 
 # 4. Apply the schema to production
 npx wrangler d1 execute oura-cache --remote --file=./migrations/001_init.sql

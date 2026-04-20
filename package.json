@@ -13,11 +13,11 @@
     "wrangler": "^4.10.0"
   },
   "engines": {
-    "node": "22.x",
+    "node": "24.x",
     "pnpm": "10.x"
   },
   "volta": {
-    "node": "22.14.0",
+    "node": "24.11.1",
     "pnpm": "10.22.0"
   },
   "pnpm": {

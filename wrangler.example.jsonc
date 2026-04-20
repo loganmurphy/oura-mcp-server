@@ -5,13 +5,13 @@
   "compatibility_flags": ["nodejs_compat"],
 
   // D1 cache database
-  // After running `wrangler login` + `wrangler d1 create oura-cache`,
-  // paste the returned database_id below.
+  // 1. Run: wrangler d1 create oura-cache
+  // 2. Copy the printed database_id and paste it below
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "oura-cache",
-      "database_id": "REPLACE_WITH_DATABASE_ID"
+      "database_id": "YOUR_DATABASE_ID"
     }
   ],
 

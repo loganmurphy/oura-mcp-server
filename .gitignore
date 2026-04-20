@@ -20,6 +20,9 @@ worker-configuration.d.ts
 # Logs
 *.log
 
+# Wrangler config contains personal infrastructure IDs — copy from wrangler.example.jsonc
+wrangler.jsonc
+
 # Claude Code local config
 .claude/settings.local.json
 
