@@ -8,7 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 pnpm dev          # Start local dev server on http://localhost:8787 (Miniflare, hot reload)
 pnpm deploy       # Deploy to Cloudflare Workers (requires wrangler login)
 pnpm cf-typegen   # Regenerate worker-configuration.d.ts from wrangler.jsonc bindings
-npx tsc --noEmit  # Type check (no build step — wrangler bundles with esbuild at deploy time)
+pnpm onboard      # Interactive wizard — provisions D1, deploys Worker, sets up Zero Trust, wires Claude Desktop
+npx tsc --noEmit -p tsconfig.scripts.json   # Type-check the onboard script
+npx tsc --noEmit                             # Type-check the Worker (no build step — wrangler bundles via esbuild)
 ```
 
 D1 migrations:
@@ -22,10 +24,24 @@ npx wrangler d1 execute oura-cache --remote --file=./migrations/001_init.sql  # 
 cp wrangler.example.jsonc wrangler.jsonc
 ```
 
-Local secrets go in `.dev.vars` (gitignored):
+Local secrets live in `.dev.vars` (gitignored). `pnpm onboard` manages this file — you should rarely need to touch it by hand:
+
 ```
-OURA_API_TOKEN=your_token_here
+OURA_API_TOKEN=...                # Oura PAT (user-provided)
+CLOUDFLARE_ACCOUNT_ID=...         # Selected during onboard, remembered across runs
+WORKER_SUBDOMAIN=...              # Your *.workers.dev subdomain
+CLOUDFLARE_ACCESS_API_TOKEN=...   # Access-scoped API token for Zero Trust calls
+CF_ACCESS_CLIENT_ID=...           # Service token credentials — used by mcp-remote via
+CF_ACCESS_CLIENT_SECRET=...       #   the Claude Desktop config's `env` block
 ```
+
+### `scripts/onboard.ts` — auth model
+
+Browser OAuth on every run (PKCE against wrangler's public client ID `54d11594-84e4-41aa-b438-e81b8fa78ee7`, fixed callback `http://localhost:8976/oauth/callback`). No persisted Cloudflare user credentials — OAuth tokens aren't saved because they expire, and we don't accept Global API Keys or user-supplied `CLOUDFLARE_API_TOKEN` anymore (simpler, one code path).
+
+One wrinkle: OAuth scopes from wrangler's client don't cover Zero Trust / Access endpoints, and the `POST /user/tokens` mint-a-scoped-token endpoint also requires scopes OAuth doesn't grant. So the script has a one-time manual step — it asks the user to create an API token with `Access: Apps and Policies → Edit` + `Access: Service Tokens → Edit`, pasted once and cached under `CLOUDFLARE_ACCESS_API_TOKEN`.
+
+Idempotency: D1 database, Access app, service token (reused from saved creds if still present on Cloudflare), and policy are all detected and reused. The script never deletes resources — stale leftovers are the user's to manage.
 
 ## Architecture
 

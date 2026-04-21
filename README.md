@@ -29,6 +29,36 @@ On a partial cache hit the worker streams the cached portion to the client immed
 - [Oura developer account](https://cloud.ouraring.com/personal-access-tokens) with a Personal Access Token
 - Node.js 22 LTS and pnpm 10 — [Volta](https://volta.sh) is recommended to manage these automatically (versions are pinned in `package.json`)
 
+## Onboarding
+
+```bash
+pnpm install
+pnpm onboard
+```
+
+An interactive wizard handles the full setup end-to-end — no manual Cloudflare dashboard clicks, no hand-edited config files. It will:
+
+1. Log you in to Cloudflare via your browser (PKCE, no credentials stored — same flow `wrangler login` uses)
+2. Pick an account and confirm your `workers.dev` subdomain
+3. Create a D1 database (`oura-cache`) and apply the schema
+4. Show a **plan preview** listing every resource that will be created or reused, and wait for your `y` before touching anything
+5. Prompt for your Oura Personal Access Token (or open the token page if you don't have one)
+6. Deploy the Worker and set `OURA_API_TOKEN` as a secret
+7. Provision Cloudflare Access (Zero Trust) so only your service token can reach the Worker
+8. Write the two `oura-sleep` / `oura-activity` entries into your Claude Desktop config (preserving any other MCP servers you have)
+
+Re-running is safe — every step detects existing resources and reuses them. The wizard never deletes anything.
+
+One manual step: the Zero Trust provisioning needs a Cloudflare API token with `Access: Apps and Policies` + `Access: Service Tokens` permissions. Wrangler's OAuth client doesn't grant Access scopes, so we can't mint this programmatically — the wizard opens the token page and asks you to paste one in, once. It's cached in `.dev.vars` for subsequent runs.
+
+When it finishes, fully quit Claude Desktop (Cmd+Q) and relaunch — then ask *"What was my sleep score last night?"*
+
+<details>
+<summary>Prefer to do it by hand?</summary>
+
+The sections below walk through the equivalent manual setup.
+</details>
+
 ## Local development
 
 ```bash
