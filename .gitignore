@@ -9,6 +9,7 @@ node_modules/
 
 # Local secrets — never commit
 .dev.vars
+.dev.vars.bak
 
 # TypeScript
 *.tsbuildinfo
@@ -22,6 +23,7 @@ worker-configuration.d.ts
 
 # Wrangler config contains personal infrastructure IDs — copy from wrangler.example.jsonc
 wrangler.jsonc
+wrangler.jsonc.bak
 
 # Claude Code local config
 .claude/settings.local.json
