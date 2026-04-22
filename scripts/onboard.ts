@@ -393,48 +393,33 @@ async function pickAccount(client: Cloudflare): Promise<{ id: string; name: stri
 async function ensureWorkersSubdomain(client: Cloudflare, accountId: string): Promise<string> {
   step(3, "workers.dev subdomain");
 
-  // First-time accounts don't have a subdomain yet. CF auto-creates one the
-  // first time the Workers & Pages landing page is visited in the dashboard —
-  // it's a browser-only side effect, not a separate API. We open that URL,
-  // wait for the user, then retry.
+  // CF auto-creates the subdomain on first visit to the Workers & Pages
+  // dashboard page. If the user is doing a truly fresh-account run, the
+  // subdomain may not exist yet — open the page, wait once, retry. If it
+  // still isn't there we bail; a second retry doesn't change anything.
   const landingUrl = `https://dash.cloudflare.com/${accountId}/workers-and-pages`;
-  const MAX_RETRIES = 3;
-
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+  const fetchSubdomain = async () => {
     try {
       const res = await client.workers.subdomains.get({ account_id: accountId });
-      const sub = (res as { subdomain?: string }).subdomain;
-      if (sub) {
-        ok(`workers.dev subdomain: ${c.cyan(`${sub}.workers.dev`)}`);
-        saveDevVars({ WORKER_SUBDOMAIN: sub });
-        return sub;
-      }
-      // API returned 200 with empty subdomain — treat as not-yet-created.
+      return (res as { subdomain?: string }).subdomain || undefined;
     } catch (e) {
-      // Error code 10007 is the documented "no subdomain yet" response. Any
-      // other error we rethrow — the remedy differs.
-      const msg = (e as Error).message ?? "";
-      if (!msg.includes("10007")) throw e;
+      if (!(e as Error).message?.includes("10007")) throw e;
+      return undefined;
     }
+  };
 
-    if (attempt === 0) {
-      warn("No workers.dev subdomain on this account yet.");
-      console.log(`  Cloudflare creates one automatically the first time you visit the`);
-      console.log(`  Workers & Pages landing page in the dashboard. Opening it now:`);
-      console.log(`    ${c.cyan(landingUrl)}`);
-      console.log(`  Once the page finishes loading, the subdomain exists — no clicks needed.`);
-      openBrowser(landingUrl);
-    } else {
-      warn(`Still no subdomain detected (attempt ${attempt + 1}/${MAX_RETRIES}).`);
-      console.log(`  Make sure ${c.cyan(landingUrl)} finished loading before pressing Enter.`);
-    }
+  let sub = await fetchSubdomain();
+  if (!sub) {
+    warn("No workers.dev subdomain yet — opening Workers & Pages to auto-create it.");
+    openBrowser(landingUrl);
     await pressEnter("Press Enter once the page has loaded...");
+    sub = await fetchSubdomain();
   }
+  if (!sub) throw new Error(`Subdomain still missing. Visit ${landingUrl} and re-run.`);
 
-  throw new Error(
-    `No workers.dev subdomain after ${MAX_RETRIES} attempts. Visit ${landingUrl} ` +
-    `in your browser, wait for it to finish loading, then re-run pnpm onboard.`,
-  );
+  ok(`workers.dev subdomain: ${c.cyan(`${sub}.workers.dev`)}`);
+  saveDevVars({ WORKER_SUBDOMAIN: sub });
+  return sub;
 }
 
 async function ensureD1(client: Cloudflare, accountId: string): Promise<string> {
