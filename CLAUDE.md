@@ -42,6 +42,8 @@ One manually-created Cloudflare API token drives everything — the SDK client a
 
 Zero Trust subscription enrollment (credit card + Free plan signup) can't be done via API — fresh accounts have to visit the dashboard once. After the org exists, everything else (app, service token, policy) is programmatic.
 
+**Fragile:** `ensureAccessEnabled` currently relies on the observation that just loading `dash.cloudflare.com/<account>/one/` auto-provisions a default Zero Trust org with no plan signup or credit card. This almost certainly isn't intended — CF's UI says Free plan enrollment is required — and if they patch it, bootstrap will start failing at that step with a 9999 "Access not enabled" error. The fix would be to restore the full Free-plan flow (prompt for team name, walk through the wizard in-browser, retry the probe). The previous implementation is in git history.
+
 Why not OAuth? Wrangler's public OAuth client doesn't grant Access / Zero Trust scopes, and `POST /user/tokens` (the mint-a-scoped-token endpoint) also requires scopes the OAuth session doesn't have. One pasted token with the right scopes is simpler and covers both SDK and CLI needs.
 
 Idempotency: D1 database, Access app, service token (reused from saved creds if still present on Cloudflare), and policy are all detected and reused. The only delete the script performs is removing a superseded service token after rotation, once the new one is wired into the policy.

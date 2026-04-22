@@ -414,10 +414,15 @@ async function ensureAccessEnabled(client: Cloudflare, accountId: string): Promi
 
   if (await probe()) return;
 
-  // Empirically, just visiting the Zero Trust dashboard page provisions a
-  // default org server-side — no Free-plan signup or credit card required.
-  // (Probably a CF bug, but we'll take it.) A real plan only becomes
-  // necessary if the user ever adds paid features; we never do.
+  // FRAGILE: empirically, just loading dash.cloudflare.com/<account>/one/
+  // provisions a default Zero Trust org server-side — no Free-plan signup,
+  // no credit card, no clicks. CF's UI strongly suggests a plan signup is
+  // required, so this is almost certainly an unintended side effect of the
+  // dashboard bootstrapping the org on first page load. If CF ever fixes
+  // that, first-run bootstrap will fail here with 9999 ("Access not enabled")
+  // and we'll need to restore the full plan-signup flow that asks the user
+  // to pick a team name and complete the Free-plan wizard in the browser.
+  // (See git history around this file for the previous implementation.)
   const dashUrl = `https://dash.cloudflare.com/${accountId}/one/`;
   info("Cloudflare Zero Trust isn't enabled yet — opening the dashboard to provision it.");
   console.log(`  ${c.dim("Just loading the page is enough; you don't need to click anything.")}`);
