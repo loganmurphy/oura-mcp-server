@@ -53,11 +53,7 @@ One manual step: Cloudflare API tokens can't be minted programmatically without 
 
 When it finishes, fully quit Claude Desktop (Cmd+Q) and relaunch — then ask *"What was my sleep score last night?"*
 
-<details>
-<summary>Prefer to do it by hand?</summary>
-
-The sections below walk through the equivalent manual setup.
-</details>
+The sections below cover manual setup (local dev, direct `wrangler deploy`) if you'd rather skip the wizard.
 
 ## Local development
 
@@ -216,10 +212,6 @@ pnpm dev
 ## Roadmap
 
 - **Oura OAuth** — the server currently uses a Personal Access Token (personal use only). A future version will support the full Oura OAuth flow so this can be shared as a general-purpose server. The PAT approach is intentional for now to avoid incurring OAuth infrastructure costs.
-
-## Tutorial
-
-> 📸 _Screenshots and walkthrough coming soon._
 
 ## Project structure
 
