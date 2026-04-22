@@ -412,14 +412,21 @@ async function ensureAccessEnabled(
     if (!msg.includes("9999") && !msg.includes("not enabled")) throw e;
   }
 
-  info("Cloudflare Zero Trust isn't enabled yet on this account — creating it now.");
-  const defaultName = slugify(accountName);
+  info("Cloudflare Zero Trust isn't enabled yet on this account — let's create your team.");
+  console.log(`  ${c.dim("This becomes your Access login URL (<team>.cloudflareaccess.com).")}`);
+  console.log(`  ${c.dim("Rules: lowercase letters, numbers, and hyphens; 3-32 chars; globally unique.")}`);
 
-  // Try to create the org programmatically. auth_domain is a globally-unique
-  // subdomain (e.g. <name>.cloudflareaccess.com); if it's taken or the name
-  // is malformed, prompt the user for an alternative.
-  let chosen = defaultName;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  // Prompt up-front rather than auto-guess — account-name derivatives tend to
+  // trip Cloudflare's reserved-word and format rules (error 11004).
+  // Retry on collision or invalid format. Bail out (to the dashboard fallback)
+  // only on scope failure or if the user gives up.
+  const defaultName = slugify(accountName).split("-")[0]?.slice(0, 32) ?? "oura-mcp";
+  let chosen = "";
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const input = await prompt("Team name", attempt === 0 ? defaultName : "").catch(() => "");
+    chosen = slugify(input).slice(0, 32);
+    if (!chosen) continue;
+
     try {
       await client.zeroTrust.organizations.create({
         account_id: accountId,
@@ -430,17 +437,16 @@ async function ensureAccessEnabled(
       return;
     } catch (e) {
       const msg = (e as Error).message ?? "";
-      // Auth / scope failure — token is missing Access: Organizations Edit.
-      // Nothing we can do via API; fall through to the dashboard flow.
       if (msg.includes("10000") || msg.includes("Authentication error")) {
         warn("Your API token can't create Zero Trust organizations — falling back to the dashboard.");
         break;
       }
-      // Likely a name/domain collision or format issue — re-prompt.
+      if (msg.includes("11004") || msg.includes("invalid_auth_domain")) {
+        warn(`"${chosen}.cloudflareaccess.com" isn't a valid or available team domain.`);
+        console.log(`  ${c.dim("Try a different name — it may be taken, reserved, or contain a blocked substring.")}`);
+        continue;
+      }
       warn(`Couldn't create "${chosen}": ${c.dim(msg)}`);
-      const alt = await prompt(`Enter a different team name (attempt ${attempt + 2}/3)`).catch(() => "");
-      if (!alt) break;
-      chosen = slugify(alt);
     }
   }
 
