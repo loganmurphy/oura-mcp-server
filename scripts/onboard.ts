@@ -559,6 +559,11 @@ async function setupZeroTrust(
   let svcId: string | undefined;
   let clientId: string | undefined;
   let clientSecret: string | undefined;
+  // Old token to delete *after* the replacement is in place. The only delete
+  // operation this script performs — and only when we're replacing a token
+  // with a fresh one that supersedes it (near-expiry rotation or a stale
+  // same-named token whose secret we've lost).
+  let supersededTokenId: string | undefined;
 
   // Important: `client_id` is the public identifier used in the CF-Access-Client-Id
   // header. The Access policy, however, references the service token by its
@@ -567,43 +572,70 @@ async function setupZeroTrust(
   if (savedClientId && savedClientSecret) {
     for await (const t of client.zeroTrust.access.serviceTokens.list({ account_id: accountId })) {
       if (t.client_id === savedClientId && t.id) {
-        svcId = t.id;
-        clientId = savedClientId;
-        clientSecret = savedClientSecret;
-        ok(`Reusing existing service token ${c.dim(`(${clientId.slice(0, 8)}…)`)}`);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const expiresAt = (t as any).expires_at as string | undefined;
+        const nearExpiry = expiresAt
+          ? new Date(expiresAt).getTime() - Date.now() < 14 * 24 * 60 * 60 * 1000
+          : false;
+        if (nearExpiry) {
+          const expDate = new Date(expiresAt!).toISOString().slice(0, 10);
+          warn(`Saved service token expires on ${expDate} — rotating now`);
+          info("Claude Desktop will get new credentials; quit + relaunch after this finishes");
+          supersededTokenId = t.id; // delete after new token is saved
+          // Leave svcId undefined so the creation branch below fires.
+        } else {
+          svcId = t.id;
+          clientId = savedClientId;
+          clientSecret = savedClientSecret;
+          const expStr = expiresAt ? ` expires ${new Date(expiresAt).toISOString().slice(0, 10)}` : "";
+          ok(`Reusing existing service token ${c.dim(`(${clientId.slice(0, 8)}…${expStr})`)}`);
+        }
         break;
       }
     }
-    if (!svcId) {
+    if (!svcId && !savedClientId) {
       info("Saved service token no longer exists on Cloudflare — creating a new one");
     }
   }
 
   if (!svcId) {
-    // No reusable token. If a token with our preferred name already exists
-    // (from a previous run whose secret we lost), we can't reuse or overwrite
-    // it — so suffix the name to avoid the conflict. The old token will sit
-    // unused in the account; cleanup is the user's call, not ours.
-    let desiredName = SERVICE_TOKEN_NAME;
-    const existingNames = new Set<string>();
+    // ── Duration (expiry) ────────────────────────────────────────────────────
+    // Cloudflare Access service tokens default to a 1-year expiry (other
+    // options are 2y, 5y, 10y, or forever). We take the 1-year default — it's
+    // already a reasonable blast-radius cap, and re-running `pnpm onboard`
+    // within 14 days of expiry auto-rotates.
+    info(`Service token will use Cloudflare's ${c.bold("1-year")} default expiry — re-run ${c.cyan("pnpm onboard")} before then to auto-rotate.`);
+
+    // If a token with our preferred name already exists (e.g. from a previous
+    // run whose client_secret we no longer have), mark it for deletion after
+    // the replacement is provisioned. We can't reuse it — the secret is only
+    // returned at creation time.
     for await (const t of client.zeroTrust.access.serviceTokens.list({ account_id: accountId })) {
-      if (t.name) existingNames.add(t.name);
-    }
-    if (existingNames.has(desiredName)) {
-      desiredName = `${SERVICE_TOKEN_NAME}-${new Date().toISOString().slice(0, 10)}`;
-      let n = 2;
-      while (existingNames.has(desiredName)) desiredName = `${SERVICE_TOKEN_NAME}-${new Date().toISOString().slice(0, 10)}-${n++}`;
-      info(`An old "${SERVICE_TOKEN_NAME}" token already exists — creating "${desiredName}" instead`);
+      if (t.name === SERVICE_TOKEN_NAME && t.id && t.id !== supersededTokenId) {
+        supersededTokenId = t.id;
+        info(`Found existing "${SERVICE_TOKEN_NAME}" token — will replace it`);
+        break;
+      }
     }
     const svc = await client.zeroTrust.access.serviceTokens.create({
       account_id: accountId,
-      name: desiredName,
-    });
+      name: SERVICE_TOKEN_NAME,
+      // CF applies the 1-year default when `duration` is omitted.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
     svcId = svc.id!;
     clientId = svc.client_id!;
     clientSecret = svc.client_secret!;
-    ok(`Service token created ${c.dim(`(${desiredName})`)}`);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const expiresAt = (svc as any).expires_at as string | undefined;
+    const expStr = expiresAt ? `, expires ${new Date(expiresAt).toISOString().slice(0, 10)}` : ", no expiry";
+    ok(`Service token created ${c.dim(`(${SERVICE_TOKEN_NAME}${expStr})`)}`);
+    // Save the new creds *before* deleting the old token — if delete fails,
+    // we've still got a working replacement committed to .dev.vars.
     saveDevVars({ CF_ACCESS_CLIENT_ID: clientId, CF_ACCESS_CLIENT_SECRET: clientSecret });
+    // Note: the superseded token is deleted *after* the policy block below
+    // reattaches to the new token — CF refuses to delete a token still
+    // referenced by any policy (error 12139).
   }
 
   // ── Policy ─────────────────────────────────────────────────────────────────
@@ -635,6 +667,27 @@ async function setupZeroTrust(
       } as any),
     });
     ok("Access policy attached");
+  }
+
+  // ── Clean up the superseded token (rotation path only) ────────────────────
+  // Now that the new token is referenced by a policy, remove any stale
+  // policies pointing at the old token, then delete the old token itself.
+  // CF returns error 12139 if a token is still referenced by a policy, group,
+  // or app SCIM config, so we unhook policies first.
+  if (supersededTokenId) {
+    try {
+      for await (const p of client.zeroTrust.access.applications.policies.list(appId, { account_id: accountId })) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const include = (p as any).include as Array<{ service_token?: { token_id?: string } }> | undefined;
+        if (p.id && include?.some((rule) => rule.service_token?.token_id === supersededTokenId)) {
+          await client.zeroTrust.access.applications.policies.delete(appId, p.id, { account_id: accountId });
+        }
+      }
+      await client.zeroTrust.access.serviceTokens.delete(supersededTokenId, { account_id: accountId });
+      ok("Removed superseded service token");
+    } catch (e) {
+      warn(`Could not delete old service token (${(e as Error).message}) — safe to remove manually in the Cloudflare dashboard`);
+    }
   }
 
   return { clientId: clientId!, clientSecret: clientSecret! };

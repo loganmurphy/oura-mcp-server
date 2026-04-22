@@ -205,9 +205,14 @@ pnpm dev
 - **Recommendation:** when you create the replacement, set a **6-12 month TTL** in the Cloudflare token creation UI (`TTL` section). A non-expiring token that leaks is a forever problem
 
 **Cloudflare Access blocking legitimate requests / "Forbidden" in mcp-remote logs**
-- Your service token (the one Claude Desktop uses, `CF_ACCESS_CLIENT_ID` + `CF_ACCESS_CLIENT_SECRET`) has been revoked or the Access policy has drifted
+- Your service token (the one Claude Desktop uses, `CF_ACCESS_CLIENT_ID` + `CF_ACCESS_CLIENT_SECRET`) has been revoked, has expired, or the Access policy has drifted
 - Re-run `pnpm onboard` — it detects the broken state and provisions a fresh service token, then updates your Claude Desktop config
 - Don't forget to fully quit Claude Desktop (Cmd+Q) and relaunch afterward
+
+**Service token expiry / rotation**
+- Access service tokens default to a **1-year expiry** set by Cloudflare — the wizard accepts that default
+- Re-running `pnpm onboard` within 14 days of expiry automatically rotates the token and updates your Claude Desktop config — a one-command refresh once a year
+- Rotate manually anytime (e.g. if you suspect the secret leaked) by re-running `pnpm onboard`
 
 ---
 
