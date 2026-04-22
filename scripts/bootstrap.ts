@@ -243,36 +243,48 @@ async function pickAccount(client: Cloudflare): Promise<{ id: string; name: stri
   return selected;
 }
 
-async function ensureWorkersSubdomain(client: Cloudflare, accountId: string): Promise<string> {
+async function ensureWorkersSubdomain(
+  client: Cloudflare, accountId: string, accountName: string,
+): Promise<string> {
   step(3, "workers.dev subdomain");
 
-  // CF auto-creates the subdomain on first visit to the Workers & Pages
-  // dashboard page. If the user is doing a truly fresh-account run, the
-  // subdomain may not exist yet — open the page, wait once, retry. If it
-  // still isn't there we bail; a second retry doesn't change anything.
-  const landingUrl = `https://dash.cloudflare.com/${accountId}/workers-and-pages`;
-  const fetchSubdomain = async () => {
-    try {
-      const res = await client.workers.subdomains.get({ account_id: accountId });
-      return (res as { subdomain?: string }).subdomain || undefined;
-    } catch (e) {
-      if (!(e as Error).message?.includes("10007")) throw e;
-      return undefined;
+  // Existing subdomain? Reuse it.
+  try {
+    const res = await client.workers.subdomains.get({ account_id: accountId });
+    const sub = (res as { subdomain?: string }).subdomain;
+    if (sub) {
+      ok(`workers.dev subdomain: ${c.cyan(`${sub}.workers.dev`)}`);
+      saveDevVars({ WORKER_SUBDOMAIN: sub });
+      return sub;
     }
-  };
-
-  let sub = await fetchSubdomain();
-  if (!sub) {
-    warn("No workers.dev subdomain yet — opening Workers & Pages to auto-create it.");
-    openBrowser(landingUrl);
-    await pressEnter("Press Enter once the page has loaded...");
-    sub = await fetchSubdomain();
+  } catch (e) {
+    // 10007 = "subdomain not registered" — fall through to creation.
+    if (!(e as Error).message?.includes("10007")) throw e;
   }
-  if (!sub) throw new Error(`Subdomain still missing. Visit ${landingUrl} and re-run.`);
 
-  ok(`workers.dev subdomain: ${c.cyan(`${sub}.workers.dev`)}`);
-  saveDevVars({ WORKER_SUBDOMAIN: sub });
-  return sub;
+  // No subdomain yet. Create one with slugified account name; re-prompt on
+  // global-uniqueness collision.
+  info("No workers.dev subdomain yet — creating one.");
+  let chosen = slugify(accountName);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const res = await client.workers.subdomains.update({
+        account_id: accountId,
+        subdomain: chosen,
+      });
+      const sub = (res as { subdomain?: string }).subdomain ?? chosen;
+      ok(`workers.dev subdomain: ${c.cyan(`${sub}.workers.dev`)}`);
+      saveDevVars({ WORKER_SUBDOMAIN: sub });
+      return sub;
+    } catch (e) {
+      const msg = (e as Error).message ?? "";
+      warn(`"${chosen}.workers.dev" is not available: ${c.dim(msg)}`);
+      const alt = await prompt(`Pick another subdomain (attempt ${attempt + 2}/5)`).catch(() => "");
+      if (!alt) break;
+      chosen = slugify(alt);
+    }
+  }
+  throw new Error("Couldn't register a workers.dev subdomain after 5 attempts.");
 }
 
 async function ensureD1(client: Cloudflare, accountId: string): Promise<string> {
@@ -785,7 +797,7 @@ async function main(): Promise<void> {
   const account = await pickAccount(client);
 
   // 3. workers.dev subdomain
-  const subdomain = await ensureWorkersSubdomain(client, account.id);
+  const subdomain = await ensureWorkersSubdomain(client, account.id, account.name);
   const workerDomain = `${WORKER_NAME}.${subdomain}.workers.dev`;
 
   // ── Plan preview ─────────────────────────────────────────────────────────
