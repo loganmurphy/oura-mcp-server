@@ -30,7 +30,7 @@ import { execSync, spawnSync } from "node:child_process";
 
 import {
   banner, c, confirm, closePrompts, info, ok, pick,
-  promptHidden, pressEnter, step, warn,
+  prompt, promptHidden, pressEnter, step, warn,
 } from "./prompts";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -124,6 +124,7 @@ const REQUIRED_SCOPES: ReadonlyArray<[string, string]> = [
   ["Account → D1 → Edit", "create the cache database and apply migrations"],
   ["Account → Access: Apps and Policies → Edit", "provision the Zero Trust app + policy"],
   ["Account → Access: Service Tokens → Edit", "mint and rotate the token Claude Desktop uses"],
+  ["Account → Access: Organizations → Edit", "enable Zero Trust on first-run accounts"],
   ["User → User Details → Read", "verify the token itself hasn't been revoked"],
 ];
 
@@ -217,6 +218,7 @@ async function pickAccount(client: Cloudflare): Promise<{ id: string; name: stri
     const match = accounts.find((a) => a.id === saved);
     if (match) {
       info(`Using saved CLOUDFLARE_ACCOUNT_ID — ${c.cyan(match.name)}`);
+      console.log(`  ${c.dim("(To switch accounts, run `pnpm reset` to clear .dev.vars + wrangler.jsonc, then re-run bootstrap.)")}`);
       return match;
     }
     warn(`Saved account ID ${c.dim(saved)} not found among your accounts — prompting below.`);
@@ -383,14 +385,11 @@ function slugify(name: string, fallback = "oura-mcp"): string {
   return slug.length >= 3 ? slug : fallback;
 }
 
-async function ensureAccessEnabled(client: Cloudflare, accountId: string, accountName: string): Promise<void> {
-  // Fresh accounts need Zero Trust enabled before we can touch Access APIs.
-  // Creating a Zero Trust organization programmatically requires a scope the
-  // pasted Access API token doesn't have (and can't be minted via OAuth), so
-  // we skip the API path entirely and just open the dashboard "Get started"
-  // flow. One-time setup for a brand-new account, never hit again.
-
-  // Probe first — if Access is already enabled, we're done.
+async function ensureAccessEnabled(
+  client: Cloudflare, accountId: string, accountName: string,
+): Promise<void> {
+  // Fresh accounts need a Zero Trust organization before we can touch the
+  // Access APIs. Probe first — if Access is already enabled, we're done.
   try {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     for await (const _ of client.zeroTrust.access.applications.list({ account_id: accountId })) break;
@@ -400,13 +399,44 @@ async function ensureAccessEnabled(client: Cloudflare, accountId: string, accoun
     if (!msg.includes("9999") && !msg.includes("not enabled")) throw e;
   }
 
+  info("Cloudflare Zero Trust isn't enabled yet on this account — creating it now.");
+  const defaultName = slugify(accountName);
+
+  // Try to create the org programmatically. auth_domain is a globally-unique
+  // subdomain (e.g. <name>.cloudflareaccess.com); if it's taken or the name
+  // is malformed, prompt the user for an alternative.
+  let chosen = defaultName;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await client.zeroTrust.organizations.create({
+        account_id: accountId,
+        name: chosen,
+        auth_domain: chosen,
+      });
+      ok(`Zero Trust organization created ${c.dim(`(${chosen}.cloudflareaccess.com)`)}`);
+      return;
+    } catch (e) {
+      const msg = (e as Error).message ?? "";
+      // Auth / scope failure — token is missing Access: Organizations Edit.
+      // Nothing we can do via API; fall through to the dashboard flow.
+      if (msg.includes("10000") || msg.includes("Authentication error")) {
+        warn("Your API token can't create Zero Trust organizations — falling back to the dashboard.");
+        break;
+      }
+      // Likely a name/domain collision or format issue — re-prompt.
+      warn(`Couldn't create "${chosen}": ${c.dim(msg)}`);
+      const alt = await prompt(`Enter a different team name (attempt ${attempt + 2}/3)`).catch(() => "");
+      if (!alt) break;
+      chosen = slugify(alt);
+    }
+  }
+
+  // Fallback: open the dashboard and let the user finish setup manually.
   const dashUrl = `https://dash.cloudflare.com/${accountId}/one/`;
-  const suggested = slugify(accountName);
-  warn("Cloudflare Zero Trust isn't enabled on this account yet.");
   console.log(`  It's ${c.bold("free")} for up to 50 users but has to be enabled in the dashboard.`);
   console.log(`  ${c.dim("(A credit card is required to complete setup, but the Free plan is never billed.)")}`);
   console.log(`  Opening ${c.cyan(dashUrl)}`);
-  console.log(`  Enter team name ${c.cyan(suggested)} ${c.dim("(or your choice)")} → select the ${c.bold("Free")} plan → Finish.`);
+  console.log(`  Enter team name ${c.cyan(defaultName)} ${c.dim("(or your choice)")} → select the ${c.bold("Free")} plan → Finish.`);
   openBrowser(dashUrl);
 
   for (let attempt = 0; attempt < 3; attempt++) {

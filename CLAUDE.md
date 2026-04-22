@@ -9,6 +9,7 @@ pnpm dev          # Start local dev server on http://localhost:8787 (Miniflare, 
 pnpm deploy       # Deploy to Cloudflare Workers (requires wrangler login)
 pnpm cf-typegen   # Regenerate worker-configuration.d.ts from wrangler.jsonc bindings
 pnpm bootstrap    # Interactive wizard — provisions D1, deploys Worker, sets up Zero Trust, wires Claude Desktop
+pnpm reset        # Clear .dev.vars + wrangler.jsonc (use before re-running bootstrap against a different CF account)
 npx tsc --noEmit -p tsconfig.scripts.json   # Type-check the bootstrap script
 npx tsc --noEmit                             # Type-check the Worker (no build step — wrangler bundles via esbuild)
 ```
@@ -37,7 +38,7 @@ CF_ACCESS_CLIENT_SECRET=...       #   the Claude Desktop config's `env` block
 
 ### `scripts/bootstrap.ts` — auth model
 
-One manually-created Cloudflare API token drives everything — the SDK client and the wrangler CLI (via `CLOUDFLARE_API_TOKEN` in env). The user creates it once in the dashboard with the scope list in `REQUIRED_SCOPES` (Account Settings Read, Workers Scripts Edit, D1 Edit, Access: Apps and Policies Edit, Access: Service Tokens Edit, User Details Read) and pastes it; it's cached in `.dev.vars` and verified on every run.
+One manually-created Cloudflare API token drives everything — the SDK client and the wrangler CLI (via `CLOUDFLARE_API_TOKEN` in env). The user creates it once in the dashboard with the scope list in `REQUIRED_SCOPES` (Account Settings Read, Workers Scripts Edit, D1 Edit, Access: Apps and Policies Edit, Access: Service Tokens Edit, Access: Organizations Edit, User Details Read) and pastes it; it's cached in `.dev.vars` and verified on every run.
 
 Why not OAuth? Wrangler's public OAuth client doesn't grant Access / Zero Trust scopes, and `POST /user/tokens` (the mint-a-scoped-token endpoint) also requires scopes the OAuth session doesn't have. One pasted token with the right scopes is simpler and covers both SDK and CLI needs.
 
