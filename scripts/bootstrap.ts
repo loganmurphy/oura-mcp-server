@@ -414,31 +414,21 @@ async function ensureAccessEnabled(client: Cloudflare, accountId: string): Promi
 
   if (await probe()) return;
 
-  // FRAGILE: empirically, just loading dash.cloudflare.com/<account>/one/
-  // provisions a default Zero Trust org server-side — no Free-plan signup,
-  // no credit card, no clicks. CF's UI strongly suggests a plan signup is
-  // required, so this is almost certainly an unintended side effect of the
-  // dashboard bootstrapping the org on first page load. If CF ever fixes
-  // that, first-run bootstrap will fail here with 9999 ("Access not enabled")
-  // and we'll need to restore the full plan-signup flow that asks the user
-  // to pick a team name and complete the Free-plan wizard in the browser.
-  // (See git history around this file for the previous implementation.)
+  // Zero Trust enrollment can't be automated — the user has to sign up for
+  // the Free plan in the dashboard. It requires a credit card but CF never
+  // bills the Free tier. Takes a couple of minutes.
   const dashUrl = `https://dash.cloudflare.com/${accountId}/one/`;
-  info("Cloudflare Zero Trust isn't enabled yet — opening the dashboard to provision it.");
-  console.log(`  ${c.dim("Just loading the page is enough; you don't need to click anything.")}`);
-  console.log(`  ${c.dim("(You can optionally set up a paid plan later — that step does ask for a credit card.)")}`);
+  info("Cloudflare Zero Trust isn't enabled yet — you'll need to sign up for the Free plan.");
+  console.log(`  ${c.dim("It's free for up to 50 users. Requires a credit card for signup but is never billed.")}`);
+  console.log(`  ${c.dim("Takes ~2 min: pick a team name → choose Free plan → add billing info → Finish.")}`);
   openBrowser(dashUrl);
-  await pressEnter("Press Enter once the page has loaded...");
 
-  if (await probe()) { ok("Zero Trust enabled"); return; }
-
-  // Page-load auto-provisioning didn't work — the user needs to sign up
-  // for the Free plan manually.
-  throw new Error(
-    `Zero Trust still not enabled.\n` +
-    `  Sign up for the Free plan at ${dashUrl} — it requires a credit card\n` +
-    `  but costs nothing (CF never bills the Free tier). Then re-run pnpm bootstrap.`,
-  );
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await pressEnter("Press Enter once you've completed the Zero Trust signup...");
+    if (await probe()) { ok("Zero Trust enabled"); return; }
+    warn(`Zero Trust still not enabled (attempt ${attempt + 1}/3). Finish the wizard at ${c.cyan(dashUrl)}.`);
+  }
+  throw new Error(`Zero Trust still not enabled after 3 checks. Complete signup at ${dashUrl}, then re-run pnpm bootstrap.`);
 }
 
 async function setupZeroTrust(

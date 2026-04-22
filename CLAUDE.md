@@ -40,9 +40,7 @@ CF_ACCESS_CLIENT_SECRET=...       #   the Claude Desktop config's `env` block
 
 One manually-created Cloudflare API token drives everything — the SDK client and the wrangler CLI (via `CLOUDFLARE_API_TOKEN` in env). The user creates it once in the dashboard with the scope list in `REQUIRED_SCOPES` (Account Settings Read, Workers Scripts Edit, D1 Edit, Access: Apps and Policies Edit, Access: Service Tokens Edit, User Details Read) and pastes it; it's cached in `.dev.vars` and verified on every run.
 
-Zero Trust subscription enrollment (credit card + Free plan signup) can't be done via API — fresh accounts have to visit the dashboard once. After the org exists, everything else (app, service token, policy) is programmatic.
-
-**Fragile:** `ensureAccessEnabled` currently relies on the observation that just loading `dash.cloudflare.com/<account>/one/` auto-provisions a default Zero Trust org with no plan signup or credit card. This almost certainly isn't intended — CF's UI says Free plan enrollment is required — and if they patch it, bootstrap will start failing at that step with a 9999 "Access not enabled" error. The fix would be to restore the full Free-plan flow (prompt for team name, walk through the wizard in-browser, retry the probe). The previous implementation is in git history.
+Zero Trust subscription enrollment (credit card + Free plan signup) can't be done via API — fresh accounts have to complete the signup in the dashboard. `ensureAccessEnabled` opens `dash.cloudflare.com/<account>/one/` and waits for the user to finish the wizard, retrying the probe up to 3 times. After the org exists, everything else (app, service token, policy) is programmatic.
 
 Why not OAuth? Wrangler's public OAuth client doesn't grant Access / Zero Trust scopes, and `POST /user/tokens` (the mint-a-scoped-token endpoint) also requires scopes the OAuth session doesn't have. One pasted token with the right scopes is simpler and covers both SDK and CLI needs.
 
