@@ -135,7 +135,8 @@ async function promptApiToken(): Promise<string> {
   );
 
   if (!hasOne) {
-    console.log("\n  Create one with these permissions:");
+    console.log(`\n  ${c.bold("Skip the templates")} — none cover what we need.`);
+    console.log(`  Scroll down and click ${c.cyan('"Create Custom Token"')}, then add these permissions:`);
     for (const [scope, why] of REQUIRED_SCOPES) {
       console.log(`    • ${c.cyan(scope)} ${c.dim(`— ${why}`)}`);
     }
