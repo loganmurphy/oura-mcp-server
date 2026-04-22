@@ -538,10 +538,63 @@ async function setWorkerSecret(client: Cloudflare, accountId: string, value: str
   ok(`Secret ${c.cyan(OURA_SECRET_NAME)} set`);
 }
 
+function slugify(name: string, fallback = "oura-mcp"): string {
+  // CF auth_domain rules: 3-63 chars, a-z / 0-9 / -, no leading/trailing -.
+  const slug = name.toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 63);
+  return slug.length >= 3 ? slug : fallback;
+}
+
+async function ensureAccessEnabled(client: Cloudflare, accountId: string, accountName: string): Promise<void> {
+  // Fresh accounts need Zero Trust enabled before we can touch Access APIs.
+  // Creating a Zero Trust organization programmatically requires a scope the
+  // pasted Access API token doesn't have (and can't be minted via OAuth), so
+  // we skip the API path entirely and just open the dashboard "Get started"
+  // flow. One-time setup for a brand-new account, never hit again.
+
+  // Probe first — if Access is already enabled, we're done.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _ of client.zeroTrust.access.applications.list({ account_id: accountId })) break;
+    return;
+  } catch (e) {
+    const msg = (e as Error).message ?? "";
+    if (!msg.includes("9999") && !msg.includes("not enabled")) throw e;
+  }
+
+  const dashUrl = `https://dash.cloudflare.com/${accountId}/one/`;
+  const suggested = slugify(accountName);
+  warn("Cloudflare Zero Trust isn't enabled on this account yet.");
+  console.log(`  It's ${c.bold("free")} for up to 50 users but has to be enabled in the dashboard.`);
+  console.log(`  ${c.dim("(A credit card is required to complete setup, but the Free plan is never billed.)")}`);
+  console.log(`  Opening ${c.cyan(dashUrl)}`);
+  console.log(`  Enter team name ${c.cyan(suggested)} ${c.dim("(or your choice)")} → select the ${c.bold("Free")} plan → Finish.`);
+  openBrowser(dashUrl);
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await pressEnter("Press Enter once you've completed the Zero Trust setup...");
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      for await (const _ of client.zeroTrust.access.applications.list({ account_id: accountId })) break;
+      ok("Zero Trust enabled");
+      return;
+    } catch (e) {
+      const msg = (e as Error).message ?? "";
+      if (!msg.includes("9999") && !msg.includes("not enabled")) throw e;
+      warn(`Zero Trust still not enabled (attempt ${attempt + 1}/3). Finish the wizard at ${c.cyan(dashUrl)} and press Enter.`);
+    }
+  }
+  throw new Error(`Zero Trust still not enabled after 3 retries. Complete setup at ${dashUrl}, then re-run pnpm onboard.`);
+}
+
 async function setupZeroTrust(
-  client: Cloudflare, accountId: string, workerDomain: string,
+  client: Cloudflare, accountId: string, accountName: string, workerDomain: string,
 ): Promise<{ clientId: string; clientSecret: string }> {
   step(10, "Cloudflare Access (Zero Trust) security");
+
+  await ensureAccessEnabled(client, accountId, accountName);
 
   // Find or create Access application
   let appId: string | undefined;
@@ -920,7 +973,7 @@ async function main(): Promise<void> {
   // 10. Zero Trust — swap to a scoped-token client because OAuth scopes
   //     from wrangler's client don't include Access permissions.
   const ztClient = await ensureZeroTrustClient();
-  const { clientId, clientSecret } = await setupZeroTrust(ztClient, account.id, workerDomain);
+  const { clientId, clientSecret } = await setupZeroTrust(ztClient, account.id, account.name, workerDomain);
 
   // 11. Claude Desktop config
   const configUpdated = mergeClaudeDesktopConfig(workerDomain, clientId, clientSecret);
