@@ -4,6 +4,11 @@
   "compatibility_date": "2025-04-01",
   "compatibility_flags": ["nodejs_compat"],
 
+  // Preview URLs leak an unauthenticated endpoint for every deploy — explicitly
+  // disable them so only the production workers.dev URL (behind Zero Trust) is
+  // reachable.
+  "preview_urls": false,
+
   // D1 cache database
   // 1. Run: wrangler d1 create oura-cache
   // 2. Copy the printed database_id and paste it below
@@ -22,7 +27,7 @@
       "enabled": true,
       "invocation_logs": true
     }
-  },
+  }
 
   // OURA_API_TOKEN is set via: wrangler secret put OURA_API_TOKEN
   // To bypass the cache per request, append ?no_cache to the endpoint URL
