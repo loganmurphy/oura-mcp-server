@@ -431,7 +431,14 @@ async function ensureAccessEnabled(client: Cloudflare, accountId: string): Promi
   await pressEnter("Press Enter once the page has loaded...");
 
   if (await probe()) { ok("Zero Trust enabled"); return; }
-  throw new Error(`Zero Trust still not enabled. Load ${dashUrl} and re-run pnpm bootstrap.`);
+
+  // Page-load auto-provisioning didn't work — the user needs to sign up
+  // for the Free plan manually.
+  throw new Error(
+    `Zero Trust still not enabled.\n` +
+    `  Sign up for the Free plan at ${dashUrl} — it requires a credit card\n` +
+    `  but costs nothing (CF never bills the Free tier). Then re-run pnpm bootstrap.`,
+  );
 }
 
 async function setupZeroTrust(
