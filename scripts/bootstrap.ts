@@ -124,7 +124,6 @@ const REQUIRED_SCOPES: ReadonlyArray<[string, string]> = [
   ["Account → D1 → Edit", "create the cache database and apply migrations"],
   ["Account → Access: Apps and Policies → Edit", "provision the Zero Trust app + policy"],
   ["Account → Access: Service Tokens → Edit", "mint and rotate the token Claude Desktop uses"],
-  ["Account → Access: Organizations → Edit", "enable Zero Trust on first-run accounts"],
   ["User → User Details → Read", "verify the token itself hasn't been revoked"],
 ];
 
@@ -412,50 +411,18 @@ async function ensureAccessEnabled(
     if (!msg.includes("9999") && !msg.includes("not enabled")) throw e;
   }
 
-  info("Cloudflare Zero Trust isn't enabled yet on this account — let's create your team.");
-  console.log(`  ${c.dim("This becomes your Access login URL (<team>.cloudflareaccess.com).")}`);
-  console.log(`  ${c.dim("Rules: lowercase letters, numbers, and hyphens; 3-32 chars; globally unique.")}`);
-
-  // Prompt up-front rather than auto-guess — account-name derivatives tend to
-  // trip Cloudflare's reserved-word and format rules (error 11004).
-  // Retry on collision or invalid format. Bail out (to the dashboard fallback)
-  // only on scope failure or if the user gives up.
-  const defaultName = slugify(accountName).split("-")[0]?.slice(0, 32) ?? "oura-mcp";
-  let chosen = "";
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const input = await prompt("Team name", attempt === 0 ? defaultName : "").catch(() => "");
-    chosen = slugify(input).slice(0, 32);
-    if (!chosen) continue;
-
-    try {
-      await client.zeroTrust.organizations.create({
-        account_id: accountId,
-        name: chosen,
-        auth_domain: chosen,
-      });
-      ok(`Zero Trust organization created ${c.dim(`(${chosen}.cloudflareaccess.com)`)}`);
-      return;
-    } catch (e) {
-      const msg = (e as Error).message ?? "";
-      if (msg.includes("10000") || msg.includes("Authentication error")) {
-        warn("Your API token can't create Zero Trust organizations — falling back to the dashboard.");
-        break;
-      }
-      if (msg.includes("11004") || msg.includes("invalid_auth_domain")) {
-        warn(`"${chosen}.cloudflareaccess.com" isn't a valid or available team domain.`);
-        console.log(`  ${c.dim("Try a different name — it may be taken, reserved, or contain a blocked substring.")}`);
-        continue;
-      }
-      warn(`Couldn't create "${chosen}": ${c.dim(msg)}`);
-    }
-  }
-
-  // Fallback: open the dashboard and let the user finish setup manually.
+  // Can't automate this: `POST /access/organizations` configures an existing
+  // Zero Trust subscription but can't enroll an account in one. Fresh accounts
+  // must hit the dashboard to sign up for the Free plan (credit card required,
+  // never charged), which creates the organization server-side as a side
+  // effect. After that the rest of setupZeroTrust works fine.
   const dashUrl = `https://dash.cloudflare.com/${accountId}/one/`;
+  const suggested = slugify(accountName).split("-")[0]?.slice(0, 32) ?? "oura-mcp";
+  warn("Cloudflare Zero Trust isn't enabled yet on this account.");
   console.log(`  It's ${c.bold("free")} for up to 50 users but has to be enabled in the dashboard.`);
-  console.log(`  ${c.dim("(A credit card is required to complete setup, but the Free plan is never billed.)")}`);
+  console.log(`  ${c.dim("(A credit card is required to sign up but the Free plan is never billed.)")}`);
   console.log(`  Opening ${c.cyan(dashUrl)}`);
-  console.log(`  Enter team name ${c.cyan(defaultName)} ${c.dim("(or your choice)")} → select the ${c.bold("Free")} plan → Finish.`);
+  console.log(`  Suggested team name: ${c.cyan(suggested)} ${c.dim("(or your choice)")} → select the ${c.bold("Free")} plan → Finish.`);
   openBrowser(dashUrl);
 
   for (let attempt = 0; attempt < 3; attempt++) {
