@@ -75,12 +75,11 @@ Multi-session days (e.g. nap + main sleep in `sleep_sessions`) are stored as an 
 
 **Empty responses are never cached.** Oura processes session data after waking — the daily score syncs quickly but full HRV/stage/HR data can lag by several hours. An empty `data: []` response means "not ready yet", not "no data", so caching it would serve stale emptiness until TTL expires.
 
-**Cache bypass — three levels:**
+**Cache bypass — two levels:**
 - `skip_cache: true` tool argument — per-call, Claude can pass this when data seems stale
 - `?no_cache` query param on the endpoint URL — per-request, bypasses cache for all tools in that request; useful for `curl` smoke tests
-- `NO_CACHE=true` env var (in `.dev.vars` locally or as a `var` in `wrangler.jsonc`) — deployment-wide, disables all D1 reads/writes; intended for a dedicated debug worker, not production
 
-None of the bypass paths write to the cache.
+Neither path writes to the cache.
 
 ### Tool split
 
