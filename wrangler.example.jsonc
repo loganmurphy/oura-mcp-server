@@ -15,6 +15,15 @@
     }
   ],
 
+  // Observability — enables `wrangler tail` and the Logs tab in the CF
+  // dashboard with per-invocation entries. Free tier is generous.
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  },
+
   "vars": {
     // Set NO_CACHE="true" to disable D1 caching for this entire deployment.
     // Useful for a dedicated debug/staging worker. For per-request bypass,
