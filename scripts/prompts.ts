@@ -1,5 +1,5 @@
 /**
- * Interactive terminal prompts for the onboarding wizard.
+ * Interactive terminal prompts for the bootstrap wizard.
  * Uses raw stdin for hidden input, readline for everything else.
  */
 

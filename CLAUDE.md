@@ -8,8 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 pnpm dev          # Start local dev server on http://localhost:8787 (Miniflare, hot reload)
 pnpm deploy       # Deploy to Cloudflare Workers (requires wrangler login)
 pnpm cf-typegen   # Regenerate worker-configuration.d.ts from wrangler.jsonc bindings
-pnpm onboard      # Interactive wizard — provisions D1, deploys Worker, sets up Zero Trust, wires Claude Desktop
-npx tsc --noEmit -p tsconfig.scripts.json   # Type-check the onboard script
+pnpm bootstrap    # Interactive wizard — provisions D1, deploys Worker, sets up Zero Trust, wires Claude Desktop
+npx tsc --noEmit -p tsconfig.scripts.json   # Type-check the bootstrap script
 npx tsc --noEmit                             # Type-check the Worker (no build step — wrangler bundles via esbuild)
 ```
 
@@ -24,24 +24,24 @@ npx wrangler d1 execute oura-cache --remote --file=./migrations/001_init.sql  # 
 cp wrangler.example.jsonc wrangler.jsonc
 ```
 
-Local secrets live in `.dev.vars` (gitignored). `pnpm onboard` manages this file — you should rarely need to touch it by hand:
+Local secrets live in `.dev.vars` (gitignored). `pnpm bootstrap` manages this file — you should rarely need to touch it by hand:
 
 ```
 OURA_API_TOKEN=...                # Oura PAT (user-provided)
-CLOUDFLARE_ACCOUNT_ID=...         # Selected during onboard, remembered across runs
+CLOUDFLARE_API_TOKEN=...          # Scoped API token — drives both SDK calls and `wrangler deploy`
+CLOUDFLARE_ACCOUNT_ID=...         # Selected during bootstrap, remembered across runs
 WORKER_SUBDOMAIN=...              # Your *.workers.dev subdomain
-CLOUDFLARE_ACCESS_API_TOKEN=...   # Access-scoped API token for Zero Trust calls
 CF_ACCESS_CLIENT_ID=...           # Service token credentials — used by mcp-remote via
 CF_ACCESS_CLIENT_SECRET=...       #   the Claude Desktop config's `env` block
 ```
 
-### `scripts/onboard.ts` — auth model
+### `scripts/bootstrap.ts` — auth model
 
-Browser OAuth on every run (PKCE against wrangler's public client ID `54d11594-84e4-41aa-b438-e81b8fa78ee7`, fixed callback `http://localhost:8976/oauth/callback`). No persisted Cloudflare user credentials — OAuth tokens aren't saved because they expire, and we don't accept Global API Keys or user-supplied `CLOUDFLARE_API_TOKEN` anymore (simpler, one code path).
+One manually-created Cloudflare API token drives everything — the SDK client and the wrangler CLI (via `CLOUDFLARE_API_TOKEN` in env). The user creates it once in the dashboard with the scope list in `REQUIRED_SCOPES` (Account Settings Read, Workers Scripts Edit, D1 Edit, Access: Apps and Policies Edit, Access: Service Tokens Edit, User Details Read) and pastes it; it's cached in `.dev.vars` and verified on every run.
 
-One wrinkle: OAuth scopes from wrangler's client don't cover Zero Trust / Access endpoints, and the `POST /user/tokens` mint-a-scoped-token endpoint also requires scopes OAuth doesn't grant. So the script has a one-time manual step — it asks the user to create an API token with `Access: Apps and Policies → Edit` + `Access: Service Tokens → Edit`, pasted once and cached under `CLOUDFLARE_ACCESS_API_TOKEN`.
+Why not OAuth? Wrangler's public OAuth client doesn't grant Access / Zero Trust scopes, and `POST /user/tokens` (the mint-a-scoped-token endpoint) also requires scopes the OAuth session doesn't have. One pasted token with the right scopes is simpler and covers both SDK and CLI needs.
 
-Idempotency: D1 database, Access app, service token (reused from saved creds if still present on Cloudflare), and policy are all detected and reused. The script never deletes resources — stale leftovers are the user's to manage.
+Idempotency: D1 database, Access app, service token (reused from saved creds if still present on Cloudflare), and policy are all detected and reused. The only delete the script performs is removing a superseded service token after rotation, once the new one is wired into the policy.
 
 ## Architecture
 

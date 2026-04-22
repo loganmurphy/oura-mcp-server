@@ -29,16 +29,16 @@ On a partial cache hit the worker streams the cached portion to the client immed
 - [Oura developer account](https://cloud.ouraring.com/personal-access-tokens) with a Personal Access Token
 - Node.js 22 LTS and pnpm 10 — [Volta](https://volta.sh) is recommended to manage these automatically (versions are pinned in `package.json`)
 
-## Onboarding
+## Bootstrap
 
 ```bash
 pnpm install
-pnpm onboard
+pnpm bootstrap
 ```
 
-An interactive wizard handles the full setup end-to-end — no manual Cloudflare dashboard clicks, no hand-edited config files. It will:
+An interactive wizard handles the full setup end-to-end. It will:
 
-1. Log you in to Cloudflare via your browser (PKCE, no credentials stored — same flow `wrangler login` uses)
+1. Prompt you for a Cloudflare API token (opens the dashboard and walks through the required permissions)
 2. Pick an account and confirm your `workers.dev` subdomain
 3. Create a D1 database (`oura-cache`) and apply the schema
 4. Show a **plan preview** listing every resource that will be created or reused, and wait for your `y` before touching anything
@@ -47,9 +47,9 @@ An interactive wizard handles the full setup end-to-end — no manual Cloudflare
 7. Provision Cloudflare Access (Zero Trust) so only your service token can reach the Worker
 8. Write the two `oura-sleep` / `oura-activity` entries into your Claude Desktop config (preserving any other MCP servers you have)
 
-Re-running is safe — every step detects existing resources and reuses them. The wizard never deletes anything.
+Re-running is safe — every step detects existing resources and reuses them. The only delete the wizard performs is removing a superseded service token after rotation.
 
-One manual step: the Zero Trust provisioning needs a Cloudflare API token with `Access: Apps and Policies` + `Access: Service Tokens` permissions. Wrangler's OAuth client doesn't grant Access scopes, so we can't mint this programmatically — the wizard opens the token page and asks you to paste one in, once. It's cached in `.dev.vars` for subsequent runs.
+One manual step: Cloudflare API tokens can't be minted programmatically without an existing token, so the wizard opens the token page and asks you to paste one in, once. The required scopes are listed in the prompt. It's cached in `.dev.vars` and drives both the SDK calls and the `wrangler deploy` step.
 
 When it finishes, fully quit Claude Desktop (Cmd+Q) and relaunch — then ask *"What was my sleep score last night?"*
 
@@ -196,20 +196,20 @@ pnpm dev
 - Rotate the production secret: `npx wrangler secret put OURA_API_TOKEN` (no redeploy needed — it picks up on the next request)
 - For local dev: update `OURA_API_TOKEN=` in `.dev.vars` and restart `pnpm dev`
 
-**`pnpm onboard` fails with "Saved Access API token is expired or revoked"**
-- The Cloudflare API token you pasted earlier (with `Access: Apps and Policies` + `Access: Service Tokens` permissions) has expired or been revoked — the wizard automatically removes it from `.dev.vars` and prompts for a new one on the same run, so just follow the prompt
-- If you want to prevent this entirely, Access service token + Access API token are two different things. Only the *API* token expires; the *service* token used by Claude Desktop to reach the Worker keeps working. Re-running `pnpm onboard` is purely to keep admin access to Zero Trust resources
+**`pnpm bootstrap` fails with "Saved API token isn't working"**
+- The Cloudflare API token you pasted earlier has expired or been revoked — the wizard automatically removes it from `.dev.vars` and prompts for a new one on the same run, so just follow the prompt
+- The API token is separate from the Access *service* token used by Claude Desktop. Only the API token expires; the service token keeps working. Re-running `pnpm bootstrap` is purely to keep admin access to your Cloudflare resources
 - **Recommendation:** when you create the replacement, set a **6-12 month TTL** in the Cloudflare token creation UI (`TTL` section). A non-expiring token that leaks is a forever problem
 
 **Cloudflare Access blocking legitimate requests / "Forbidden" in mcp-remote logs**
 - Your service token (the one Claude Desktop uses, `CF_ACCESS_CLIENT_ID` + `CF_ACCESS_CLIENT_SECRET`) has been revoked, has expired, or the Access policy has drifted
-- Re-run `pnpm onboard` — it detects the broken state and provisions a fresh service token, then updates your Claude Desktop config
+- Re-run `pnpm bootstrap` — it detects the broken state and provisions a fresh service token, then updates your Claude Desktop config
 - Don't forget to fully quit Claude Desktop (Cmd+Q) and relaunch afterward
 
 **Service token expiry / rotation**
 - Access service tokens default to a **1-year expiry** set by Cloudflare — the wizard accepts that default
-- Re-running `pnpm onboard` within 14 days of expiry automatically rotates the token and updates your Claude Desktop config — a one-command refresh once a year
-- Rotate manually anytime (e.g. if you suspect the secret leaked) by re-running `pnpm onboard`
+- Re-running `pnpm bootstrap` within 14 days of expiry automatically rotates the token and updates your Claude Desktop config — a one-command refresh once a year
+- Rotate manually anytime (e.g. if you suspect the secret leaked) by re-running `pnpm bootstrap`
 
 ---
 

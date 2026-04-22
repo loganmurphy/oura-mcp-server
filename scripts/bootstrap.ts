@@ -1,12 +1,12 @@
 /**
- * Interactive onboarding wizard for oura-mcp-server.
+ * Interactive bootstrap wizard for oura-mcp-server.
  *
  * Goal: take a non-technical user from zero to a working Cloudflare-deployed
  * MCP server wired into Claude Desktop, in one command.
  *
  * Flow:
  *   1. Welcome + consent
- *   2. Cloudflare browser OAuth (opens dash.cloudflare.com via PKCE)
+ *   2. Cloudflare API token (paste once; cached under CLOUDFLARE_API_TOKEN)
  *   3. Account selection (auto if single)
  *   4. workers.dev subdomain (use existing / prompt to create)
  *   5. D1 cache database (reuse or create 'oura-cache')
@@ -23,10 +23,7 @@
  */
 
 import Cloudflare from "cloudflare";
-import * as crypto from "node:crypto";
 import * as fs from "node:fs";
-import * as http from "node:http";
-import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { execSync, spawnSync } from "node:child_process";
@@ -44,22 +41,6 @@ const ACCESS_APP_NAME = "oura-mcp-server";
 const SERVICE_TOKEN_NAME = "oura-mcp-server-claude";
 const OURA_PAT_URL = "https://cloud.ouraring.com/personal-access-tokens";
 const OURA_SECRET_NAME = "OURA_API_TOKEN";
-
-// Wrangler's public OAuth client — PKCE only, no client secret.
-// The redirect URI is pre-registered on Cloudflare's side — it must be exactly
-// this (fixed port, fixed path). If port 8976 is busy we can't do OAuth; the
-// script will tell the user to free it (or use the Global API Key path).
-const CF_OAUTH_CLIENT_ID = "54d11594-84e4-41aa-b438-e81b8fa78ee7";
-const CF_OAUTH_REDIRECT_PORT = 8976;
-const CF_OAUTH_REDIRECT_PATH = "/oauth/callback";
-const CF_AUTH_URL = "https://dash.cloudflare.com/oauth2/auth";
-const CF_TOKEN_URL = "https://dash.cloudflare.com/oauth2/token";
-const CF_SCOPES = [
-  "account:read", "user:read",
-  "workers:write", "workers_scripts:write", "workers_routes:write",
-  "d1:write", "zone:read",
-  "offline_access",
-].join(" ");
 
 const CF_SIGNUP_URL = "https://dash.cloudflare.com/sign-up";
 const CF_API_TOKENS_URL = "https://dash.cloudflare.com/profile/api-tokens";
@@ -129,170 +110,34 @@ function openBrowser(url: string): void {
   try { execSync(cmd, { stdio: "ignore" }); } catch { /* non-fatal */ }
 }
 
-// ── Cloudflare browser OAuth (PKCE) ──────────────────────────────────────────
-
-async function cloudflareBrowserAuth(): Promise<string> {
-  const verifier = crypto.randomBytes(32).toString("base64url");
-  const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
-  const state = crypto.randomBytes(16).toString("hex");
-
-  // Cloudflare's OAuth client (the one wrangler uses) has this exact redirect
-  // URI pre-registered. Random ports won't work — we must use 8976.
-  const port = CF_OAUTH_REDIRECT_PORT;
-  const redirectUri = `http://localhost:${port}${CF_OAUTH_REDIRECT_PATH}`;
-
-  // Verify the port is free up-front with a friendly error if not
-  await new Promise<void>((resolve, reject) => {
-    const probe = net.createServer();
-    probe.once("error", (err: NodeJS.ErrnoException) => {
-      if (err.code === "EADDRINUSE") {
-        reject(new Error(
-          `Port ${port} is in use (required for Cloudflare OAuth callback).\n` +
-          `  Free it (e.g. lsof -ti:${port} | xargs kill) and re-run, or\n` +
-          `  use the Global API Key option instead.`
-        ));
-      } else {
-        reject(err);
-      }
-    });
-    probe.listen(port, "127.0.0.1", () => {
-      probe.close(() => resolve());
-    });
-  });
-
-  const authUrl = new URL(CF_AUTH_URL);
-  authUrl.searchParams.set("response_type", "code");
-  authUrl.searchParams.set("client_id", CF_OAUTH_CLIENT_ID);
-  authUrl.searchParams.set("redirect_uri", redirectUri);
-  authUrl.searchParams.set("scope", CF_SCOPES);
-  authUrl.searchParams.set("state", state);
-  authUrl.searchParams.set("code_challenge", challenge);
-  authUrl.searchParams.set("code_challenge_method", "S256");
-
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => { server.close(); reject(new Error("OAuth timed out")); }, 5 * 60 * 1000);
-
-    const html = (okMark: boolean, msg: string) =>
-      `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-        body{font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#fafafa}
-        .box{text-align:center;padding:3rem;border-radius:16px;background:${okMark ? "#f0fdf4" : "#fef2f2"};box-shadow:0 4px 24px rgba(0,0,0,0.06)}
-        h2{margin:0 0 0.5rem;font-size:1.5rem}p{color:#555;margin:0}
-      </style></head><body><div class="box"><h2>${okMark ? "✅" : "❌"} ${msg}</h2><p>You can close this tab.</p></div></body></html>`;
-
-    const server = http.createServer(async (req, res) => {
-      const reqUrl = new URL(req.url ?? "/", `http://localhost:${port}`);
-      if (reqUrl.pathname !== CF_OAUTH_REDIRECT_PATH) { res.writeHead(404).end(); return; }
-
-      clearTimeout(timeout);
-
-      const code = reqUrl.searchParams.get("code");
-      const returnedState = reqUrl.searchParams.get("state");
-      const error = reqUrl.searchParams.get("error");
-
-      if (error || !code || returnedState !== state) {
-        res.writeHead(400, { "Content-Type": "text/html" }).end(html(false, error ?? "Authorization failed"));
-        server.close();
-        reject(new Error(error ?? "Authorization failed"));
-        return;
-      }
-
-      try {
-        const resp = await fetch(CF_TOKEN_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            grant_type: "authorization_code",
-            client_id: CF_OAUTH_CLIENT_ID,
-            code, redirect_uri: redirectUri, code_verifier: verifier,
-          }),
-        });
-        const data = await resp.json() as Record<string, unknown>;
-        if (!resp.ok || !data["access_token"]) {
-          const msg = (data["error_description"] as string) ?? "Token exchange failed";
-          res.writeHead(400, { "Content-Type": "text/html" }).end(html(false, msg));
-          server.close();
-          reject(new Error(msg));
-          return;
-        }
-        res.writeHead(200, { "Content-Type": "text/html" }).end(html(true, "Authorized"));
-        server.close();
-        resolve(data["access_token"] as string);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : "Token exchange failed";
-        res.writeHead(500, { "Content-Type": "text/html" }).end(html(false, msg));
-        server.close();
-        reject(new Error(msg));
-      }
-    });
-
-    server.listen(port, "127.0.0.1", () => {
-      info(`Redirect URL: ${redirectUri}`);
-      info("Opening your browser to log in to Cloudflare...");
-      openBrowser(authUrl.toString());
-    });
-  });
-}
-
-// ── Steps ────────────────────────────────────────────────────────────────────
-
-async function doAuth(): Promise<{ client: Cloudflare; email: string; apiToken: string }> {
-  step(1, "Connect to Cloudflare");
-
-  // Only the Account ID is remembered across runs — never the OAuth token
-  // (they expire) and never a long-lived user credential. One browser login
-  // per run keeps the auth model dead simple and matches what wrangler does.
-  const haveSavedAccountId = !!(
-    loadDevVars()["CLOUDFLARE_ACCOUNT_ID"] ?? process.env["CLOUDFLARE_ACCOUNT_ID"]
-  );
-
-  if (!haveSavedAccountId) {
-    const hasAccount = await confirm("Do you already have a Cloudflare account?", true);
-    if (!hasAccount) {
-      console.log("  No problem — it's free and takes about a minute.");
-      info(`Opening the signup page: ${c.cyan(CF_SIGNUP_URL)}`);
-      openBrowser(CF_SIGNUP_URL);
-      console.log("  Create your account, verify your email, then come back here.\n");
-      await pressEnter("Press Enter once your account is ready...");
-    }
-    console.log("  We'll use your Cloudflare account to host the MCP server.");
-    console.log("  Your data stays in your account — we never see it.\n");
-  }
-
-  const apiToken = await cloudflareBrowserAuth();
-  const client = new Cloudflare({ apiToken });
-  ok("Browser login successful");
-
-  // Verify + fetch identity
-  try {
-    const me = await client.user.get();
-    const email = (me as { email?: string }).email ?? "unknown";
-    ok(`Authenticated as ${c.cyan(email)}`);
-    return { client, email, apiToken };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Unknown auth error";
-    throw new Error(`Couldn't verify credentials: ${msg}`);
-  }
-}
-
-// ── Scoped API token (needed for Zero Trust / Access endpoints) ──────────────
+// ── Cloudflare API token ─────────────────────────────────────────────────────
 //
-// Why this exists: OAuth tokens from wrangler's public client don't carry the
-// Access / Zero Trust scopes, so we can't call the Access API with them.
-// The "obvious" fix — calling POST /user/tokens to mint a scoped token from
-// the OAuth session — doesn't work either: that endpoint also requires scopes
-// the OAuth client doesn't grant. So for OAuth users we just ask them to
-// create the Access-scoped token manually, once.
+// One manually-created API token drives everything: the SDK calls we make
+// directly, and the wrangler CLI (via CLOUDFLARE_API_TOKEN in env). We ask
+// the user to create it once with the full scope list below. Wrangler's
+// public OAuth client doesn't grant Access scopes and can't mint scoped
+// tokens from its session, so OAuth isn't a viable alternative here.
 
-async function promptManualApiToken(): Promise<string> {
+const REQUIRED_SCOPES: ReadonlyArray<[string, string]> = [
+  ["Account → Account Settings → Read", "list accounts, detect the workers.dev subdomain"],
+  ["Account → Workers Scripts → Edit", "deploy the Worker and set its secrets"],
+  ["Account → D1 → Edit", "create the cache database and apply migrations"],
+  ["Account → Access: Apps and Policies → Edit", "provision the Zero Trust app + policy"],
+  ["Account → Access: Service Tokens → Edit", "mint and rotate the token Claude Desktop uses"],
+  ["User → User Details → Read", "verify the token itself hasn't been revoked"],
+];
+
+async function promptApiToken(): Promise<string> {
   const hasOne = await confirm(
-    "Do you already have a Cloudflare API token with Access permissions?",
+    "Do you already have a Cloudflare API token with the right permissions?",
     false,
   );
 
   if (!hasOne) {
-    console.log("\n  Create one with these two permissions:");
-    console.log(`    • ${c.cyan("Account → Access: Apps and Policies → Edit")}`);
-    console.log(`    • ${c.cyan("Account → Access: Service Tokens → Edit")}`);
+    console.log("\n  Create one with these permissions:");
+    for (const [scope, why] of REQUIRED_SCOPES) {
+      console.log(`    • ${c.cyan(scope)} ${c.dim(`— ${why}`)}`);
+    }
     console.log();
     console.log(`  ${c.bold("Security tip:")} in the ${c.cyan('"TTL"')} section, set an ${c.bold("expiration date")}`);
     console.log(`  (${c.cyan("6-12 months")} is reasonable). A leaked non-expiring token is forever.`);
@@ -307,48 +152,54 @@ async function promptManualApiToken(): Promise<string> {
   return token;
 }
 
-/**
- * Returns a Cloudflare client that can access the Zero Trust / Access API.
- * OAuth tokens from wrangler's client don't include Access scopes, so we
- * prompt the user once for an Access-scoped API token and cache it under
- * CLOUDFLARE_ACCESS_API_TOKEN for subsequent runs.
- */
-async function ensureZeroTrustClient(): Promise<Cloudflare> {
-  const saved = loadDevVars()["CLOUDFLARE_ACCESS_API_TOKEN"];
+async function ensureApiToken(): Promise<{ client: Cloudflare; apiToken: string }> {
+  step(1, "Connect to Cloudflare");
+
+  const saved = loadDevVars()["CLOUDFLARE_API_TOKEN"] ?? process.env["CLOUDFLARE_API_TOKEN"];
   if (saved) {
-    // Probe the saved token before trusting it. If it's expired or revoked
-    // we'd otherwise blow up several calls deep into setupZeroTrust with an
-    // opaque 401 — catch it here and prompt for a new one.
     const client = new Cloudflare({ apiToken: saved });
     try {
       await client.user.tokens.verify();
-      info("Using saved CLOUDFLARE_ACCESS_API_TOKEN for Zero Trust");
-      return client;
+      const me = await client.user.get();
+      const email = (me as { email?: string }).email ?? "unknown";
+      ok(`Using saved CLOUDFLARE_API_TOKEN ${c.dim(`(${email})`)}`);
+      return { client, apiToken: saved };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      const looksExpired =
-        msg.includes("expired") || msg.includes("1001") ||
-        msg.includes("401") || msg.includes("Invalid access token");
-      if (looksExpired) {
-        warn("Saved Access API token is expired or revoked");
-      } else {
-        warn(`Saved Access API token isn't working: ${c.dim(msg)}`);
-      }
+      warn(`Saved API token isn't working: ${c.dim(msg)}`);
       console.log(`  ${c.dim("Removing it from .dev.vars and asking for a new one.")}`);
       const current = loadDevVars();
-      delete current["CLOUDFLARE_ACCESS_API_TOKEN"];
+      delete current["CLOUDFLARE_API_TOKEN"];
       fs.writeFileSync(
         DEV_VARS_PATH,
         Object.entries(current).map(([k, v]) => `${k}=${v}`).join("\n") + "\n",
       );
     }
+  } else {
+    const hasAccount = await confirm("Do you already have a Cloudflare account?", true);
+    if (!hasAccount) {
+      console.log("  No problem — it's free and takes about a minute.");
+      info(`Opening the signup page: ${c.cyan(CF_SIGNUP_URL)}`);
+      openBrowser(CF_SIGNUP_URL);
+      console.log("  Create your account, verify your email, then come back here.\n");
+      await pressEnter("Press Enter once your account is ready...");
+    }
+    console.log("  We'll use your Cloudflare account to host the MCP server.");
+    console.log("  Your data stays in your account — we never see it.\n");
   }
 
-  info("Zero Trust needs an Access-scoped API token (your browser login doesn't cover it)");
-  const token = await promptManualApiToken();
-  ok("API token captured");
-  saveDevVars({ CLOUDFLARE_ACCESS_API_TOKEN: token });
-  return new Cloudflare({ apiToken: token });
+  const apiToken = await promptApiToken();
+  const client = new Cloudflare({ apiToken });
+  try {
+    const me = await client.user.get();
+    const email = (me as { email?: string }).email ?? "unknown";
+    ok(`Authenticated as ${c.cyan(email)}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Unknown auth error";
+    throw new Error(`Couldn't verify credentials: ${msg}`);
+  }
+  saveDevVars({ CLOUDFLARE_API_TOKEN: apiToken });
+  return { client, apiToken };
 }
 
 async function pickAccount(client: Cloudflare): Promise<{ id: string; name: string }> {
@@ -571,7 +422,7 @@ async function ensureAccessEnabled(client: Cloudflare, accountId: string, accoun
       warn(`Zero Trust still not enabled (attempt ${attempt + 1}/3). Finish the wizard at ${c.cyan(dashUrl)} and press Enter.`);
     }
   }
-  throw new Error(`Zero Trust still not enabled after 3 retries. Complete setup at ${dashUrl}, then re-run pnpm onboard.`);
+  throw new Error(`Zero Trust still not enabled after 3 retries. Complete setup at ${dashUrl}, then re-run pnpm bootstrap.`);
 }
 
 async function setupZeroTrust(
@@ -658,9 +509,9 @@ async function setupZeroTrust(
     // ── Duration (expiry) ────────────────────────────────────────────────────
     // Cloudflare Access service tokens default to a 1-year expiry (other
     // options are 2y, 5y, 10y, or forever). We take the 1-year default — it's
-    // already a reasonable blast-radius cap, and re-running `pnpm onboard`
+    // already a reasonable blast-radius cap, and re-running `pnpm bootstrap`
     // within 14 days of expiry auto-rotates.
-    info(`Service token will use Cloudflare's ${c.bold("1-year")} default expiry — re-run ${c.cyan("pnpm onboard")} before then to auto-rotate.`);
+    info(`Service token will use Cloudflare's ${c.bold("1-year")} default expiry — re-run ${c.cyan("pnpm bootstrap")} before then to auto-rotate.`);
 
     // If a token with our preferred name already exists (e.g. from a previous
     // run whose client_secret we no longer have), mark it for deletion after
@@ -873,7 +724,7 @@ function printManualSnippet(workerDomain: string, clientId: string, clientSecret
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  banner("oura-mcp-server — Onboarding", [
+  banner("oura-mcp-server — Bootstrap", [
     "This will set up everything needed to chat with",
     "your Oura Ring data inside Claude Desktop.",
     "",
@@ -893,12 +744,12 @@ async function main(): Promise<void> {
   ]);
 
   if (!(await confirm("Ready to start?", true))) {
-    console.log("  Cancelled. Run again any time with `pnpm onboard`.");
+    console.log("  Cancelled. Run again any time with `pnpm bootstrap`.");
     return;
   }
 
   // 1. Auth
-  const { client, apiToken } = await doAuth();
+  const { client, apiToken } = await ensureApiToken();
 
   // 2. Account
   const account = await pickAccount(client);
@@ -955,10 +806,8 @@ async function main(): Promise<void> {
   // 9. Set secret on deployed worker
   await setWorkerSecret(client, account.id, ouraToken);
 
-  // 10. Zero Trust — swap to a scoped-token client because OAuth scopes
-  //     from wrangler's client don't include Access permissions.
-  const ztClient = await ensureZeroTrustClient();
-  const { clientId, clientSecret } = await setupZeroTrust(ztClient, account.id, account.name, workerDomain);
+  // 10. Zero Trust
+  const { clientId, clientSecret } = await setupZeroTrust(client, account.id, account.name, workerDomain);
 
   // 11. Claude Desktop config
   const configUpdated = mergeClaudeDesktopConfig(workerDomain, clientId, clientSecret);

@@ -6,7 +6,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "cf-typegen": "wrangler types",
-    "onboard": "tsx scripts/onboard.ts"
+    "bootstrap": "tsx scripts/bootstrap.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250409.0",
