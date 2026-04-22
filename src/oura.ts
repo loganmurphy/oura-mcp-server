@@ -1,35 +1,15 @@
 const OURA_BASE = "https://api.ouraring.com";
 
-export interface OuraEnv {
-  OURA_API_TOKEN: string;
-}
-
 function dateRange(startDate?: string, endDate?: string) {
   const params = new URLSearchParams();
   if (startDate) params.set("start_date", startDate);
   if (endDate) params.set("end_date", endDate);
-  // Default: last 7 days
   if (!startDate) {
     const d = new Date();
     d.setDate(d.getDate() - 7);
     params.set("start_date", d.toISOString().slice(0, 10));
   }
   return params;
-}
-
-/** Thrown when the Oura PAT is missing, expired, or revoked. The MCP handler
- *  surfaces this with a user-actionable message pointing at the PAT page and
- *  the wrangler secret rotation command. */
-export class OuraAuthError extends Error {
-  constructor(public readonly status: number, public readonly body: string) {
-    super(
-      `Oura rejected the token (${status}). Your Oura Personal Access Token ` +
-      `has likely expired or been revoked — PATs expire every ~3 months.\n\n` +
-      `Fix: generate a new PAT at https://cloud.ouraring.com/personal-access-tokens ` +
-      `and rotate it with:\n    npx wrangler secret put OURA_API_TOKEN`,
-    );
-    this.name = "OuraAuthError";
-  }
 }
 
 async function ouraget(token: string, path: string, params: URLSearchParams) {
@@ -40,8 +20,12 @@ async function ouraget(token: string, path: string, params: URLSearchParams) {
   });
   if (!res.ok) {
     const text = await res.text();
+    // PATs expire every ~3 months — surface a fix-it message rather than a bare 401.
     if (res.status === 401 || res.status === 403) {
-      throw new OuraAuthError(res.status, text);
+      throw new Error(
+        `Oura rejected the token (${res.status}). Your Personal Access Token has likely expired or been revoked — PATs expire every ~3 months.\n\n` +
+        `Fix: generate a new PAT at https://cloud.ouraring.com/personal-access-tokens and rotate it with:\n    npx wrangler secret put OURA_API_TOKEN`,
+      );
     }
     throw new Error(`Oura API error ${res.status}: ${text}`);
   }

@@ -1,8 +1,4 @@
-// D1-backed cache for Oura API responses.
-//
-// Each row stores one day's data for a given metric, enabling partial cache hits:
-// if a 7-day query has 5 days cached we can serve those instantly and only fetch
-// the 2 missing days from the Oura API.
+// Per-day rows let us serve partial cache hits and fetch only the missing dates.
 
 const TTL: Record<"today" | "yesterday" | "older" | "singleton", number> = {
   today:     1  * 60 * 60 * 1000,  // 1h  — data still accumulating
@@ -22,10 +18,6 @@ function ttlFor(dateKey: string): number {
 function isStale(fetchedAt: number, dateKey: string): boolean {
   return Date.now() - fetchedAt > ttlFor(dateKey);
 }
-
-// ---------------------------------------------------------------------------
-// Date-range cache (daily_sleep, sleep_sessions, readiness, activity, …)
-// ---------------------------------------------------------------------------
 
 export interface CacheResult {
   hits: Map<string, unknown>;   // date → cached item(s)
@@ -73,10 +65,7 @@ export async function setCachedRange(
   await db.batch(stmts);
 }
 
-// ---------------------------------------------------------------------------
-// Singleton cache (personal_info)
-// ---------------------------------------------------------------------------
-
+// personal_info has no date dimension — stored under a fixed key.
 const SINGLETON_KEY = "__singleton__";
 
 export async function getCachedSingleton(db: D1Database, metric: string): Promise<unknown | null> {
@@ -96,10 +85,6 @@ export async function setCachedSingleton(db: D1Database, metric: string, data: u
     .bind(metric, SINGLETON_KEY, JSON.stringify(data), now)
     .run();
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 /** Returns every date string (YYYY-MM-DD) in [start, end] inclusive. */
 export function datesInRange(start: string, end: string): string[] {

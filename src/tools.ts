@@ -16,13 +16,7 @@ const SKIP_CACHE_PROP = {
   },
 } as const;
 
-/**
- * Sleep & Recovery tools — served at /mcp/sleep
- *
- * Claude Desktop enforces a per-MCP-server tool cap (~5 tools). Splitting into
- * two focused servers keeps each under the limit while grouping tools by domain:
- * sleep quality, recovery, and overnight biometrics belong together here.
- */
+// Split into two servers because Claude Desktop enforces a per-server tool cap (~5).
 export const SLEEP_TOOLS: ToolDef[] = [
   {
     name: "oura_personal_info",
@@ -70,7 +64,6 @@ export const SLEEP_TOOLS: ToolDef[] = [
   },
   {
     name: "oura_daily_spo2",
-    // SpO2 is measured overnight, making it a natural fit for the sleep/recovery group
     description: "Get daily blood oxygen saturation (SpO2) averages. Measured during sleep — useful for spotting breathing disruptions alongside sleep stage data.",
     inputSchema: {
       type: "object",
@@ -83,13 +76,6 @@ export const SLEEP_TOOLS: ToolDef[] = [
   },
 ];
 
-/**
- * Activity & Wellness tools — served at /mcp/activity
- *
- * Daytime metrics: movement, workouts, continuous heart rate, and stress.
- * Kept separate from sleep/recovery so each server stays within the
- * Claude Desktop tool cap and the domains remain semantically distinct.
- */
 export const ACTIVITY_TOOLS: ToolDef[] = [
   {
     name: "oura_daily_activity",

@@ -26,10 +26,6 @@ export interface Env {
   DB: D1Database;
 }
 
-// ---------------------------------------------------------------------------
-// MCP protocol types
-// ---------------------------------------------------------------------------
-
 interface JsonRpcRequest {
   jsonrpc: "2.0";
   id: string | number | null;
@@ -65,12 +61,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-// ---------------------------------------------------------------------------
-// SSE helpers — used when we have partial cache hits so we can stream cached
-// data back to the client immediately while fetching the missing dates from
-// the Oura API in parallel.
-// ---------------------------------------------------------------------------
-
+// SSE is used for partial cache hits so the cached portion ships before the Oura fetch finishes.
 const enc = new TextEncoder();
 
 function sseChunk(obj: unknown): Uint8Array {
@@ -87,14 +78,9 @@ function sseResponse(readable: ReadableStream): Response {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Raw Oura fetchers (no cache)
-// ---------------------------------------------------------------------------
-
 type DateArgs = { start_date?: string; end_date?: string };
 type DatetimeArgs = { start_datetime?: string; end_datetime?: string };
 
-/** Fetch from Oura API and return the parsed response. */
 async function fetchFromOura(
   name: string,
   args: Record<string, unknown>,
@@ -117,10 +103,6 @@ async function fetchFromOura(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Cache-aware tool dispatch
-// ---------------------------------------------------------------------------
-
 /** Tools with per-day cacheable items (response.data[].day field). */
 const DATE_KEYED_TOOLS = new Set([
   "oura_daily_sleep",
@@ -132,11 +114,8 @@ const DATE_KEYED_TOOLS = new Set([
   "oura_daily_stress",
 ]);
 
-/**
- * For date-keyed tools, items from the Oura response may be grouped per day
- * (e.g. sleep_sessions can have >1 session per night). We store all of a
- * day's items as a single cache entry (array or single object).
- */
+// Some endpoints return multiple items per day (e.g. nap + main sleep);
+// we collapse them into one cache row per day.
 function groupByDay(items: Array<{ day: string } & Record<string, unknown>>) {
   const map = new Map<string, unknown>();
   for (const item of items) {
@@ -144,7 +123,6 @@ function groupByDay(items: Array<{ day: string } & Record<string, unknown>>) {
     if (existing === undefined) {
       map.set(item.day, item);
     } else {
-      // Multiple items for same day (e.g. naps + main sleep) → store as array
       map.set(item.day, Array.isArray(existing) ? [...existing, item] : [existing, item]);
     }
   }
@@ -152,12 +130,9 @@ function groupByDay(items: Array<{ day: string } & Record<string, unknown>>) {
 }
 
 /**
- * Handle a date-range tool call with streaming cache support:
- *
- * 1. All dates cached & fresh  → return JSON immediately (fastest path)
- * 2. Some dates cached         → SSE: stream cached chunk first, fetch missing
- *                                dates from Oura, stream complete merged result
- * 3. No dates cached           → fetch all from Oura, return JSON, cache async
+ * Date-range tool dispatch:
+ *  - Full cache hit → plain JSON
+ *  - Partial / miss → SSE: cached chunk first (if any), then Oura fetch, then merged result
  */
 async function handleDateRangeTool(
   id: string | number | null,
@@ -173,12 +148,10 @@ async function handleDateRangeTool(
   const dates = datesInRange(start, end);
   const metric = toolName.replace("oura_", "");
 
-  // Skip cache read when explicitly requested or forced via ?no_cache query param
   const cache: CacheResult = skipCache
     ? { hits: new Map(), misses: dates }
     : await getCachedRange(db, metric, dates);
 
-  // ── Fast path: 100% cache hit ──────────────────────────────────────────
   if (cache.misses.length === 0) {
     const items = dates.flatMap((d) => {
       const v = cache.hits.get(d);
@@ -189,15 +162,11 @@ async function handleDateRangeTool(
     }));
   }
 
-  // ── Streaming path: partial or full miss ──────────────────────────────
-  // We open an SSE stream so we can push the cached portion to the client
-  // immediately while the Oura fetch is in flight.
   const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
   const writer = writable.getWriter();
 
   const work = async () => {
     try {
-      // 1. Flush cached dates immediately (if any)
       if (cache.hits.size > 0) {
         const cachedItems = dates.flatMap((d) => {
           const v = cache.hits.get(d);
@@ -210,24 +179,21 @@ async function handleDateRangeTool(
             _cached_dates:   [...cache.hits.keys()],
             _fetching_dates: cache.misses,
           }, null, 2) }],
-          _partial: true, // informational — not part of the MCP spec
+          _partial: true,
         })));
       }
 
-      // 2. Fetch only the missing date range from Oura
       const missStart = cache.misses[0]!;
       const missEnd   = cache.misses[cache.misses.length - 1]!;
       const freshResp = (await fetchFromOura(toolName, { start_date: missStart, end_date: missEnd }, token)) as
         { data: Array<{ day: string } & Record<string, unknown>> };
 
-      // 3. Merge: cached dates + fresh dates, preserving original order
       const freshByDay = groupByDay(freshResp.data);
       const allItems = dates.flatMap((d) => {
         const v = cache.hits.get(d) ?? freshByDay.get(d);
         return v === undefined ? [] : Array.isArray(v) ? v : [v];
       });
 
-      // 4. Send complete merged result
       await writer.write(sseChunk(ok(id, {
         content: [{ type: "text", text: JSON.stringify({
           data:   allItems,
@@ -235,9 +201,8 @@ async function handleDateRangeTool(
         }, null, 2) }],
       })));
 
-      // 5. Persist fresh items to D1 (non-blocking).
-      // Skip caching empty responses — an empty array usually means the data
-      // hasn't synced from the ring yet, not that there's genuinely nothing there.
+      // Empty Oura responses usually mean "not synced yet" — don't cache them or
+      // we serve stale emptiness until the TTL expires.
       const toCache = [...freshByDay.entries()].map(([dateKey, data]) => ({ dateKey, data }));
       if (toCache.length > 0 && !skipCache) {
         ctx.waitUntil(setCachedRange(db, metric, toCache));
@@ -258,7 +223,6 @@ async function handleDateRangeTool(
   return sseResponse(readable);
 }
 
-/** Handle personal_info with singleton cache. */
 async function handleSingletonTool(
   id: string | number | null,
   toolName: string,
@@ -282,7 +246,7 @@ async function handleSingletonTool(
   }));
 }
 
-/** heart_rate uses datetimes not dates; skip per-day caching, pass through directly. */
+// heart_rate is datetime-keyed, not date-keyed — doesn't fit the per-day cache.
 async function handleHeartRateTool(
   id: string | number | null,
   args: Record<string, unknown>,
@@ -293,10 +257,6 @@ async function handleHeartRateTool(
     content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
   }));
 }
-
-// ---------------------------------------------------------------------------
-// MCP request handler
-// ---------------------------------------------------------------------------
 
 async function handleMcp(
   request: Request,
@@ -367,10 +327,6 @@ async function handleMcp(
       return jsonResponse(err(id, -32601, `Method not found: ${method}`), 404);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Worker entry
-// ---------------------------------------------------------------------------
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
