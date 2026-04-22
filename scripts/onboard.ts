@@ -293,6 +293,10 @@ async function promptManualApiToken(): Promise<string> {
     console.log("\n  Create one with these two permissions:");
     console.log(`    • ${c.cyan("Account → Access: Apps and Policies → Edit")}`);
     console.log(`    • ${c.cyan("Account → Access: Service Tokens → Edit")}`);
+    console.log();
+    console.log(`  ${c.bold("Security tip:")} in the ${c.cyan('"TTL"')} section, set an ${c.bold("expiration date")}`);
+    console.log(`  (${c.cyan("6-12 months")} is reasonable). A leaked non-expiring token is forever.`);
+    console.log(`  When it expires this script will tell you, and you'll paste a new one.`);
     info(`Opening ${c.cyan(CF_API_TOKENS_URL)} in your browser...`);
     openBrowser(CF_API_TOKENS_URL);
     await pressEnter("Press Enter once you've created and copied the token...");
@@ -312,8 +316,32 @@ async function promptManualApiToken(): Promise<string> {
 async function ensureZeroTrustClient(): Promise<Cloudflare> {
   const saved = loadDevVars()["CLOUDFLARE_ACCESS_API_TOKEN"];
   if (saved) {
-    info("Using saved CLOUDFLARE_ACCESS_API_TOKEN for Zero Trust");
-    return new Cloudflare({ apiToken: saved });
+    // Probe the saved token before trusting it. If it's expired or revoked
+    // we'd otherwise blow up several calls deep into setupZeroTrust with an
+    // opaque 401 — catch it here and prompt for a new one.
+    const client = new Cloudflare({ apiToken: saved });
+    try {
+      await client.user.tokens.verify();
+      info("Using saved CLOUDFLARE_ACCESS_API_TOKEN for Zero Trust");
+      return client;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const looksExpired =
+        msg.includes("expired") || msg.includes("1001") ||
+        msg.includes("401") || msg.includes("Invalid access token");
+      if (looksExpired) {
+        warn("Saved Access API token is expired or revoked");
+      } else {
+        warn(`Saved Access API token isn't working: ${c.dim(msg)}`);
+      }
+      console.log(`  ${c.dim("Removing it from .dev.vars and asking for a new one.")}`);
+      const current = loadDevVars();
+      delete current["CLOUDFLARE_ACCESS_API_TOKEN"];
+      fs.writeFileSync(
+        DEV_VARS_PATH,
+        Object.entries(current).map(([k, v]) => `${k}=${v}`).join("\n") + "\n",
+      );
+    }
   }
 
   info("Zero Trust needs an Access-scoped API token (your browser login doesn't cover it)");

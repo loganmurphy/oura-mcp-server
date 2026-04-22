@@ -17,6 +17,21 @@ function dateRange(startDate?: string, endDate?: string) {
   return params;
 }
 
+/** Thrown when the Oura PAT is missing, expired, or revoked. The MCP handler
+ *  surfaces this with a user-actionable message pointing at the PAT page and
+ *  the wrangler secret rotation command. */
+export class OuraAuthError extends Error {
+  constructor(public readonly status: number, public readonly body: string) {
+    super(
+      `Oura rejected the token (${status}). Your Oura Personal Access Token ` +
+      `has likely expired or been revoked — PATs expire every ~3 months.\n\n` +
+      `Fix: generate a new PAT at https://cloud.ouraring.com/personal-access-tokens ` +
+      `and rotate it with:\n    npx wrangler secret put OURA_API_TOKEN`,
+    );
+    this.name = "OuraAuthError";
+  }
+}
+
 async function ouraget(token: string, path: string, params: URLSearchParams) {
   const qs = params.toString();
   const url = `${OURA_BASE}${path}${qs ? "?" + qs : ""}`;
@@ -25,6 +40,9 @@ async function ouraget(token: string, path: string, params: URLSearchParams) {
   });
   if (!res.ok) {
     const text = await res.text();
+    if (res.status === 401 || res.status === 403) {
+      throw new OuraAuthError(res.status, text);
+    }
     throw new Error(`Oura API error ${res.status}: ${text}`);
   }
   return res.json();

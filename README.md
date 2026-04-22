@@ -193,8 +193,21 @@ pnpm dev
 - Or bypass cache for an entire endpoint at the URL level (useful during testing): append `?no_cache` to the MCP endpoint in `claude_desktop_config.json`, e.g. `.../mcp/sleep?no_cache`
 - Empty responses are never cached, so retrying later will always hit Oura fresh
 
-**Oura API returning 401**
-- Personal Access Tokens expire — generate a new one at [cloud.ouraring.com/personal-access-tokens](https://cloud.ouraring.com/personal-access-tokens) and update your `.dev.vars` or Worker secret
+**Oura API returning 401 / Claude sees "Oura rejected the token"**
+- Personal Access Tokens expire every ~3 months. The Worker detects 401/403 from Oura and returns an actionable error in the MCP tool response — so the error you see in Claude will already include the fix command
+- Generate a new PAT at [cloud.ouraring.com/personal-access-tokens](https://cloud.ouraring.com/personal-access-tokens)
+- Rotate the production secret: `npx wrangler secret put OURA_API_TOKEN` (no redeploy needed — it picks up on the next request)
+- For local dev: update `OURA_API_TOKEN=` in `.dev.vars` and restart `pnpm dev`
+
+**`pnpm onboard` fails with "Saved Access API token is expired or revoked"**
+- The Cloudflare API token you pasted earlier (with `Access: Apps and Policies` + `Access: Service Tokens` permissions) has expired or been revoked — the wizard automatically removes it from `.dev.vars` and prompts for a new one on the same run, so just follow the prompt
+- If you want to prevent this entirely, Access service token + Access API token are two different things. Only the *API* token expires; the *service* token used by Claude Desktop to reach the Worker keeps working. Re-running `pnpm onboard` is purely to keep admin access to Zero Trust resources
+- **Recommendation:** when you create the replacement, set a **6-12 month TTL** in the Cloudflare token creation UI (`TTL` section). A non-expiring token that leaks is a forever problem
+
+**Cloudflare Access blocking legitimate requests / "Forbidden" in mcp-remote logs**
+- Your service token (the one Claude Desktop uses, `CF_ACCESS_CLIENT_ID` + `CF_ACCESS_CLIENT_SECRET`) has been revoked or the Access policy has drifted
+- Re-run `pnpm onboard` — it detects the broken state and provisions a fresh service token, then updates your Claude Desktop config
+- Don't forget to fully quit Claude Desktop (Cmd+Q) and relaunch afterward
 
 ---
 
