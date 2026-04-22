@@ -397,56 +397,44 @@ function slugify(name: string, fallback = "oura-mcp"): string {
   return slug.length >= 3 ? slug : fallback;
 }
 
-async function ensureAccessEnabled(
-  client: Cloudflare, accountId: string, accountName: string,
-): Promise<void> {
-  // Fresh accounts need a Zero Trust organization before we can touch the
-  // Access APIs. Probe first — if Access is already enabled, we're done.
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    for await (const _ of client.zeroTrust.access.applications.list({ account_id: accountId })) break;
-    return;
-  } catch (e) {
-    const msg = (e as Error).message ?? "";
-    if (!msg.includes("9999") && !msg.includes("not enabled")) throw e;
-  }
-
-  // Can't automate this: `POST /access/organizations` configures an existing
-  // Zero Trust subscription but can't enroll an account in one. Fresh accounts
-  // must hit the dashboard to sign up for the Free plan (credit card required,
-  // never charged), which creates the organization server-side as a side
-  // effect. After that the rest of setupZeroTrust works fine.
-  const dashUrl = `https://dash.cloudflare.com/${accountId}/one/`;
-  const suggested = slugify(accountName).split("-")[0]?.slice(0, 32) ?? "oura-mcp";
-  warn("Cloudflare Zero Trust isn't enabled yet on this account.");
-  console.log(`  It's ${c.bold("free")} for up to 50 users but has to be enabled in the dashboard.`);
-  console.log(`  ${c.dim("(A credit card is required to sign up but the Free plan is never billed.)")}`);
-  console.log(`  Opening ${c.cyan(dashUrl)}`);
-  console.log(`  Suggested team name: ${c.cyan(suggested)} ${c.dim("(or your choice)")} → select the ${c.bold("Free")} plan → Finish.`);
-  openBrowser(dashUrl);
-
-  for (let attempt = 0; attempt < 3; attempt++) {
-    await pressEnter("Press Enter once you've completed the Zero Trust setup...");
+async function ensureAccessEnabled(client: Cloudflare, accountId: string): Promise<void> {
+  // Fresh accounts need a Zero Trust organization before Access APIs work.
+  // Probe first — if it's already there we're done.
+  const probe = async () => {
     try {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       for await (const _ of client.zeroTrust.access.applications.list({ account_id: accountId })) break;
-      ok("Zero Trust enabled");
-      return;
+      return true;
     } catch (e) {
       const msg = (e as Error).message ?? "";
       if (!msg.includes("9999") && !msg.includes("not enabled")) throw e;
-      warn(`Zero Trust still not enabled (attempt ${attempt + 1}/3). Finish the wizard at ${c.cyan(dashUrl)} and press Enter.`);
+      return false;
     }
-  }
-  throw new Error(`Zero Trust still not enabled after 3 retries. Complete setup at ${dashUrl}, then re-run pnpm bootstrap.`);
+  };
+
+  if (await probe()) return;
+
+  // Empirically, just visiting the Zero Trust dashboard page provisions a
+  // default org server-side — no Free-plan signup or credit card required.
+  // (Probably a CF bug, but we'll take it.) A real plan only becomes
+  // necessary if the user ever adds paid features; we never do.
+  const dashUrl = `https://dash.cloudflare.com/${accountId}/one/`;
+  info("Cloudflare Zero Trust isn't enabled yet — opening the dashboard to provision it.");
+  console.log(`  ${c.dim("Just loading the page is enough; you don't need to click anything.")}`);
+  console.log(`  ${c.dim("(You can optionally set up a paid plan later — that step does ask for a credit card.)")}`);
+  openBrowser(dashUrl);
+  await pressEnter("Press Enter once the page has loaded...");
+
+  if (await probe()) { ok("Zero Trust enabled"); return; }
+  throw new Error(`Zero Trust still not enabled. Load ${dashUrl} and re-run pnpm bootstrap.`);
 }
 
 async function setupZeroTrust(
-  client: Cloudflare, accountId: string, accountName: string, workerDomain: string,
+  client: Cloudflare, accountId: string, workerDomain: string,
 ): Promise<{ clientId: string; clientSecret: string }> {
   step(10, "Cloudflare Access (Zero Trust) security");
 
-  await ensureAccessEnabled(client, accountId, accountName);
+  await ensureAccessEnabled(client, accountId);
 
   // Find or create Access application
   let appId: string | undefined;
@@ -823,7 +811,7 @@ async function main(): Promise<void> {
   await setWorkerSecret(client, account.id, ouraToken);
 
   // 10. Zero Trust
-  const { clientId, clientSecret } = await setupZeroTrust(client, account.id, account.name, workerDomain);
+  const { clientId, clientSecret } = await setupZeroTrust(client, account.id, workerDomain);
 
   // 11. Claude Desktop config
   const configUpdated = mergeClaudeDesktopConfig(workerDomain, clientId, clientSecret);
