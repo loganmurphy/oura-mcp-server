@@ -1,27 +1,3 @@
-/**
- * Interactive bootstrap wizard for oura-mcp-server.
- *
- * Goal: take a non-technical user from zero to a working Cloudflare-deployed
- * MCP server wired into Claude Desktop, in one command.
- *
- * Flow:
- *   1. Welcome + consent
- *   2. Cloudflare API token (paste once; cached under CLOUDFLARE_API_TOKEN)
- *   3. Account selection (auto if single)
- *   4. workers.dev subdomain (use existing / prompt to create)
- *   5. D1 cache database (reuse or create 'oura-cache')
- *   6. Write wrangler.jsonc from template with real database_id
- *   7. Apply D1 schema migration
- *   8. Oura Personal Access Token (reuse / paste existing / open browser + paste)
- *   9. Deploy Worker (`wrangler deploy` with OAuth token in env)
- *  10. Set OURA_API_TOKEN secret on the deployed worker
- *  11. Zero Trust: Access app + Service Token + Policy (reuse or recreate)
- *  12. Merge Claude Desktop config (only update oura-sleep / oura-activity keys)
- *  13. Success summary
- *
- * Re-running is safe — all steps detect and reuse existing resources.
- */
-
 import Cloudflare from "cloudflare";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -33,8 +9,6 @@ import {
   prompt, promptHidden, pressEnter, step, warn,
 } from "./prompts";
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-
 const WORKER_NAME = "oura-mcp-server";
 const D1_NAME = "oura-cache";
 const ACCESS_APP_NAME = "oura-mcp-server";
@@ -45,12 +19,6 @@ const OURA_SECRET_NAME = "OURA_API_TOKEN";
 const CF_SIGNUP_URL = "https://dash.cloudflare.com/sign-up";
 const CF_API_TOKENS_URL = "https://dash.cloudflare.com/profile/api-tokens";
 
-// Claude Desktop config location differs by OS:
-//   macOS:   ~/Library/Application Support/Claude/claude_desktop_config.json
-//   Windows: %APPDATA%\Claude\claude_desktop_config.json
-//   Linux:   ~/.config/Claude/claude_desktop_config.json
-// (Linux isn't officially supported by Claude Desktop today, but the XDG path is
-// what community ports use — harmless to write there either way.)
 const CLAUDE_CFG_PATH = (() => {
   switch (process.platform) {
     case "darwin":
@@ -78,8 +46,6 @@ const WRANGLER_JSONC_PATH = path.resolve(process.cwd(), "wrangler.jsonc");
 const WRANGLER_EXAMPLE_PATH = path.resolve(process.cwd(), "wrangler.example.jsonc");
 const SCHEMA_PATH = path.resolve(process.cwd(), "migrations/001_init.sql");
 
-// ── .dev.vars load/save ───────────────────────────────────────────────────────
-
 function loadDevVars(): Record<string, string> {
   const vars: Record<string, string> = {};
   if (!fs.existsSync(DEV_VARS_PATH)) return vars;
@@ -100,8 +66,6 @@ function saveDevVars(vars: Record<string, string>): void {
   fs.writeFileSync(DEV_VARS_PATH, content);
 }
 
-// ── Cross-platform browser open ──────────────────────────────────────────────
-
 function openBrowser(url: string): void {
   const cmd =
     process.platform === "darwin" ? `open "${url}"` :
@@ -110,14 +74,9 @@ function openBrowser(url: string): void {
   try { execSync(cmd, { stdio: "ignore" }); } catch { /* non-fatal */ }
 }
 
-// ── Cloudflare API token ─────────────────────────────────────────────────────
-//
-// One manually-created API token drives everything: the SDK calls we make
-// directly, and the wrangler CLI (via CLOUDFLARE_API_TOKEN in env). We ask
-// the user to create it once with the full scope list below. Wrangler's
-// public OAuth client doesn't grant Access scopes and can't mint scoped
-// tokens from its session, so OAuth isn't a viable alternative here.
-
+// Wrangler's public OAuth client doesn't grant the Access scopes we need and
+// can't mint scoped tokens from its session, so we ask for a manually-created
+// API token once and reuse it for both SDK calls and the wrangler CLI.
 const REQUIRED_SCOPES: ReadonlyArray<[string, string]> = [
   ["Account → Account Settings → Read", "list accounts, detect the workers.dev subdomain"],
   ["Account → Workers Scripts → Edit", "deploy the Worker and set its secrets"],
@@ -212,7 +171,6 @@ async function pickAccount(client: Cloudflare): Promise<{ id: string; name: stri
   }
   if (accounts.length === 0) throw new Error("No Cloudflare accounts found");
 
-  // Reuse CLOUDFLARE_ACCOUNT_ID from .dev.vars if it matches an accessible account
   const saved = loadDevVars()["CLOUDFLARE_ACCOUNT_ID"] ?? process.env["CLOUDFLARE_ACCOUNT_ID"];
   if (saved) {
     const match = accounts.find((a) => a.id === saved);
@@ -248,7 +206,6 @@ async function ensureWorkersSubdomain(
 ): Promise<string> {
   step(3, "workers.dev subdomain");
 
-  // Existing subdomain? Reuse it.
   try {
     const res = await client.workers.subdomains.get({ account_id: accountId });
     const sub = (res as { subdomain?: string }).subdomain;
@@ -258,12 +215,10 @@ async function ensureWorkersSubdomain(
       return sub;
     }
   } catch (e) {
-    // 10007 = "subdomain not registered" — fall through to creation.
+    // 10007 = "subdomain not registered" → fall through to creation.
     if (!(e as Error).message?.includes("10007")) throw e;
   }
 
-  // No subdomain yet. Create one with slugified account name; re-prompt on
-  // global-uniqueness collision.
   info("No workers.dev subdomain yet — creating one.");
   let chosen = slugify(accountName);
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -290,7 +245,6 @@ async function ensureWorkersSubdomain(
 async function ensureD1(client: Cloudflare, accountId: string): Promise<string> {
   step(4, "D1 cache database");
 
-  // Look for existing by name
   for await (const db of client.d1.database.list({ account_id: accountId, name: D1_NAME })) {
     if (db.name === D1_NAME && db.uuid) {
       ok(`Found existing D1 database ${c.cyan(D1_NAME)}`);
@@ -389,7 +343,7 @@ async function setWorkerSecret(client: Cloudflare, accountId: string, value: str
 }
 
 function slugify(name: string, fallback = "oura-mcp"): string {
-  // CF auth_domain rules: 3-63 chars, a-z / 0-9 / -, no leading/trailing -.
+  // workers.dev subdomain rules: 3-63 chars, a-z / 0-9 / -, no leading/trailing -.
   const slug = name.toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
@@ -438,7 +392,6 @@ async function setupZeroTrust(
 
   await ensureAccessEnabled(client, accountId);
 
-  // Find or create Access application
   let appId: string | undefined;
   for await (const a of client.zeroTrust.access.applications.list({ account_id: accountId })) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -461,10 +414,8 @@ async function setupZeroTrust(
     ok(`Access application created ${c.dim(`(${appId})`)}`);
   }
 
-  // ── Service token ──────────────────────────────────────────────────────────
-  // client_secret is only returned on create, never on list/get. So reuse is
-  // only possible when we have the saved secret locally AND the token with
-  // that client_id still exists on Cloudflare. Otherwise we must rotate.
+  // client_secret is only returned on create — so reuse requires both the saved
+  // secret locally and a matching token still present on Cloudflare.
   const saved = loadDevVars();
   const savedClientId = saved["CF_ACCESS_CLIENT_ID"];
   const savedClientSecret = saved["CF_ACCESS_CLIENT_SECRET"];
@@ -472,16 +423,12 @@ async function setupZeroTrust(
   let svcId: string | undefined;
   let clientId: string | undefined;
   let clientSecret: string | undefined;
-  // Old token to delete *after* the replacement is in place. The only delete
-  // operation this script performs — and only when we're replacing a token
-  // with a fresh one that supersedes it (near-expiry rotation or a stale
-  // same-named token whose secret we've lost).
+  // Set when we need to replace a token (near-expiry rotation or stale same-named
+  // token whose secret we've lost). Deleted only after the replacement is in place.
   let supersededTokenId: string | undefined;
 
-  // Important: `client_id` is the public identifier used in the CF-Access-Client-Id
-  // header. The Access policy, however, references the service token by its
-  // internal resource UUID (`id`), not its client_id. Getting this wrong yields
-  // error 12130 "service token not found".
+  // `client_id` is the public header value; the Access policy references the
+  // token by its internal `id` instead. Mixing them up yields error 12130.
   if (savedClientId && savedClientSecret) {
     for await (const t of client.zeroTrust.access.serviceTokens.list({ account_id: accountId })) {
       if (t.client_id === savedClientId && t.id) {
@@ -512,17 +459,12 @@ async function setupZeroTrust(
   }
 
   if (!svcId) {
-    // ── Duration (expiry) ────────────────────────────────────────────────────
-    // Cloudflare Access service tokens default to a 1-year expiry (other
-    // options are 2y, 5y, 10y, or forever). We take the 1-year default — it's
-    // already a reasonable blast-radius cap, and re-running `pnpm bootstrap`
-    // within 14 days of expiry auto-rotates.
+    // CF service tokens default to a 1-year expiry; we accept it. Re-running
+    // bootstrap within 14 days of expiry auto-rotates.
     info(`Service token will use Cloudflare's ${c.bold("1-year")} default expiry — re-run ${c.cyan("pnpm bootstrap")} before then to auto-rotate.`);
 
-    // If a token with our preferred name already exists (e.g. from a previous
-    // run whose client_secret we no longer have), mark it for deletion after
-    // the replacement is provisioned. We can't reuse it — the secret is only
-    // returned at creation time.
+    // Stale same-named token from a past run whose secret we've lost — mark for
+    // deletion so we can create a fresh one.
     for await (const t of client.zeroTrust.access.serviceTokens.list({ account_id: accountId })) {
       if (t.name === SERVICE_TOKEN_NAME && t.id && t.id !== supersededTokenId) {
         supersededTokenId = t.id;
@@ -543,19 +485,12 @@ async function setupZeroTrust(
     const expiresAt = (svc as any).expires_at as string | undefined;
     const expStr = expiresAt ? `, expires ${new Date(expiresAt).toISOString().slice(0, 10)}` : ", no expiry";
     ok(`Service token created ${c.dim(`(${SERVICE_TOKEN_NAME}${expStr})`)}`);
-    // Save the new creds *before* deleting the old token — if delete fails,
-    // we've still got a working replacement committed to .dev.vars.
+    // Save before deleting the old token so a delete failure still leaves us with
+    // a working replacement in .dev.vars. The actual delete happens after the
+    // policy block swaps to the new token — CF refuses (error 12139) otherwise.
     saveDevVars({ CF_ACCESS_CLIENT_ID: clientId, CF_ACCESS_CLIENT_SECRET: clientSecret });
-    // Note: the superseded token is deleted *after* the policy block below
-    // reattaches to the new token — CF refuses to delete a token still
-    // referenced by any policy (error 12139).
   }
 
-  // ── Policy ─────────────────────────────────────────────────────────────────
-  // If any policy on the app already includes our service token, we're done —
-  // no need to add another. We don't delete stale policies pointing at other
-  // tokens; they're harmless (the referenced token is either valid or unused)
-  // and may have been added by the user intentionally.
   const POLICY_NAME = "Allow oura-mcp-server service token";
   let policyOk = false;
   for await (const p of client.zeroTrust.access.applications.policies.list(appId, { account_id: accountId })) {
@@ -569,7 +504,7 @@ async function setupZeroTrust(
   }
 
   if (!policyOk) {
-    // Policy — SDK type defs are incomplete, so cast
+    // SDK type defs are incomplete for policy create, so cast.
     await client.zeroTrust.access.applications.policies.create(appId, {
       account_id: accountId,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -582,11 +517,8 @@ async function setupZeroTrust(
     ok("Access policy attached");
   }
 
-  // ── Clean up the superseded token (rotation path only) ────────────────────
-  // Now that the new token is referenced by a policy, remove any stale
-  // policies pointing at the old token, then delete the old token itself.
-  // CF returns error 12139 if a token is still referenced by a policy, group,
-  // or app SCIM config, so we unhook policies first.
+  // Unhook any policies still referencing the old token before deleting it
+  // (error 12139 otherwise).
   if (supersededTokenId) {
     try {
       for await (const p of client.zeroTrust.access.applications.policies.list(appId, { account_id: accountId })) {
@@ -617,10 +549,8 @@ function mergeClaudeDesktopConfig(
 ): boolean {
   step(11, "Claude Desktop config");
 
-  // mcp-remote expands ${VAR} references in --header values from process env,
-  // so we keep the secrets out of the args array and put them in `env` instead.
-  // Benefits: less noise in the args, easier to rotate (update env, not args),
-  // and secrets don't show up in `ps` output for the npx process.
+  // Secrets live in `env` (mcp-remote expands ${VAR} in --header values) rather
+  // than inline in `args`, so they don't show up in `ps` output.
   const build = (endpoint: string): McpRemoteEntry => ({
     command: "npx",
     args: [
@@ -640,7 +570,6 @@ function mergeClaudeDesktopConfig(
     "oura-activity": build("activity"),
   };
 
-  // Read existing config if any
   let config: { mcpServers?: Record<string, McpRemoteEntry> } & Record<string, unknown> = {};
   const exists = fs.existsSync(CLAUDE_CFG_PATH);
 
@@ -678,8 +607,7 @@ function mergeClaudeDesktopConfig(
     ...newEntries,
   };
 
-  // Belt-and-suspenders: briefly snapshot the existing config so a crash
-  // mid-write can't leave it truncated. Removed on successful write.
+  // Snapshot so a crash mid-write can't truncate the existing config.
   const bak = `${CLAUDE_CFG_PATH}.bak`;
   if (exists) {
     fs.copyFileSync(CLAUDE_CFG_PATH, bak);
@@ -727,8 +655,6 @@ function printManualSnippet(workerDomain: string, clientId: string, clientSecret
 `);
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
-
 async function main(): Promise<void> {
   banner("oura-mcp-server — Bootstrap", [
     "This will set up everything needed to chat with",
@@ -754,21 +680,13 @@ async function main(): Promise<void> {
     return;
   }
 
-  // 1. Auth
   const { client, apiToken } = await ensureApiToken();
-
-  // 2. Account
   const account = await pickAccount(client);
-
-  // 3. workers.dev subdomain
   const subdomain = await ensureWorkersSubdomain(client, account.id, account.name);
   const workerDomain = `${WORKER_NAME}.${subdomain}.workers.dev`;
 
-  // ── Plan preview ─────────────────────────────────────────────────────────
-  // Everything above is read-only (or prompts for creation of things the user
-  // has already agreed they need — account, workers.dev subdomain). Before we
-  // start actually creating Cloudflare resources / deploying / editing the
-  // Claude Desktop config, show the concrete plan and get a go-ahead.
+  // Everything above is read-only (or already prompted). Show the concrete plan
+  // before we start creating resources, deploying, or editing the Claude config.
   let existingD1 = false;
   for await (const db of client.d1.database.list({ account_id: account.id, name: D1_NAME })) {
     if (db.name === D1_NAME) { existingD1 = true; break; }
@@ -794,31 +712,15 @@ async function main(): Promise<void> {
     return;
   }
 
-  // 4. D1 database
   const dbId = await ensureD1(client, account.id);
-
-  // 5. Write wrangler.jsonc
   writeWranglerConfig(dbId);
-
-  // 6. Apply schema
   await applyD1Schema(client, account.id, dbId);
-
-  // 7. Oura PAT
   const ouraToken = await ensureOuraToken();
-
-  // 8. Deploy Worker
   deployWorker(apiToken, account.id);
-
-  // 9. Set secret on deployed worker
   await setWorkerSecret(client, account.id, ouraToken);
-
-  // 10. Zero Trust
   const { clientId, clientSecret } = await setupZeroTrust(client, account.id, workerDomain);
-
-  // 11. Claude Desktop config
   const configUpdated = mergeClaudeDesktopConfig(workerDomain, clientId, clientSecret);
 
-  // 12. Done!
   console.log();
   banner("✅  Setup complete!", [
     `Worker:    ${c.cyan(`https://${workerDomain}`)}`,
