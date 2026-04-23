@@ -1,0 +1,36 @@
+{
+  "name": "oura-mcp-server",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-04-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Preview URLs leak an unauthenticated endpoint for every deploy — explicitly
+  // disable them so only the production workers.dev URL (behind Zero Trust) is
+  // reachable.
+  "preview_urls": false,
+
+  // D1 cache database.
+  // `wrangler dev` always binds to a local Miniflare SQLite store — it never
+  // reads or writes the remote D1. Only `wrangler deploy` (and
+  // `wrangler d1 execute --remote`) touch the production database.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "oura-cache",
+      "database_id": "YOUR_DATABASE_ID"
+    }
+  ],
+
+  // Observability — enables `wrangler tail` and the Logs tab in the CF
+  // dashboard with per-invocation entries. Free tier is generous.
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  }
+
+  // OURA_API_TOKEN is set via: wrangler secret put OURA_API_TOKEN
+  // To bypass the cache per request, append ?no_cache to the endpoint URL
+  // or pass `skip_cache: true` on any tool call.
+}
