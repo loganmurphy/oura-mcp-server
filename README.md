@@ -229,21 +229,6 @@ pnpm dev
 
 ---
 
-## Contributing
-
-Issues and pull requests are welcome. Before opening a PR:
-
-```bash
-pnpm lint       # oxlint — must be clean
-pnpm coverage   # Vitest + coverage gate (≥90%)
-npx tsc --noEmit
-npx tsc --noEmit -p tsconfig.scripts.json
-```
-
-Pre-commit hooks (`lefthook`) run lint and typecheck automatically after `pnpm install`.
-
----
-
 ## Roadmap
 
 - **Oura OAuth** — the server currently uses a Personal Access Token (personal use only). A future version will support the full Oura OAuth flow so this can be shared as a general-purpose server. The PAT approach is intentional for now to avoid incurring OAuth infrastructure costs.
