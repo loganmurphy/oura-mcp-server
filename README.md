@@ -1,5 +1,8 @@
 # oura-mcp-server
 
+[![CI](https://github.com/loganmurphy/oura-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/loganmurphy/oura-mcp-server/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A lightweight [Model Context Protocol](https://modelcontextprotocol.io) server that exposes your [Oura Ring](https://ouraring.com) data as tools for Claude. Runs on Cloudflare Workers with a D1 cache layer for fast repeated queries.
 
 ## Architecture
@@ -27,7 +30,7 @@ On a partial cache hit the worker fetches only the missing date range from Oura 
 
 - [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier is fine)
 - [Oura developer account](https://cloud.ouraring.com/personal-access-tokens) with a Personal Access Token
-- Node.js 22 LTS and pnpm 10 — [Volta](https://volta.sh) is recommended to manage these automatically (versions are pinned in `package.json`)
+- Node.js 24 and pnpm 10 — [Volta](https://volta.sh) is recommended to manage these automatically (versions are pinned in `package.json`)
 
 ## Bootstrap
 
@@ -223,6 +226,21 @@ pnpm dev
 - Access service tokens default to a **1-year expiry** set by Cloudflare — the wizard accepts that default
 - Re-running `pnpm bootstrap` within 14 days of expiry automatically rotates the token and updates your Claude Desktop config — a one-command refresh once a year
 - Rotate manually anytime (e.g. if you suspect the secret leaked) by re-running `pnpm bootstrap`
+
+---
+
+## Contributing
+
+Issues and pull requests are welcome. Before opening a PR:
+
+```bash
+pnpm lint       # oxlint — must be clean
+pnpm coverage   # Vitest + coverage gate (≥90%)
+npx tsc --noEmit
+npx tsc --noEmit -p tsconfig.scripts.json
+```
+
+Pre-commit hooks (`lefthook`) run lint and typecheck automatically after `pnpm install`.
 
 ---
 
