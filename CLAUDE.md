@@ -8,8 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 pnpm dev          # Start local dev server on http://localhost:8787 (Miniflare, hot reload)
 pnpm deploy       # Deploy to Cloudflare Workers (requires wrangler login)
 pnpm cf-typegen   # Regenerate worker-configuration.d.ts from wrangler.jsonc bindings
-pnpm bootstrap    # Interactive wizard — provisions D1, deploys Worker, sets up Zero Trust, wires Claude Desktop
-pnpm reset        # Clear .dev.vars + wrangler.jsonc (use before re-running bootstrap against a different CF account)
+pnpm bootstrap      # Interactive wizard — provisions D1, deploys Worker, sets up Zero Trust, wires Claude Desktop
+pnpm connect-local  # Wire Claude Desktop to the local dev server (localhost:8787) — no Cloudflare needed
+pnpm reset          # Clear .dev.vars + wrangler.jsonc (use before re-running bootstrap against a different CF account)
 npx tsc --noEmit -p tsconfig.scripts.json   # Type-check the bootstrap script
 npx tsc --noEmit                             # Type-check the Worker (no build step — wrangler bundles via esbuild)
 ```

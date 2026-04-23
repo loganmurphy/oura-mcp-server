@@ -55,6 +55,19 @@ When it finishes, fully quit Claude Desktop (Cmd+Q) and relaunch — then ask *"
 
 The sections below cover manual setup (local dev, direct `wrangler deploy`) if you'd rather skip the wizard.
 
+### Just want to try it locally first?
+
+If you'd rather skip Cloudflare entirely and run against the local dev server:
+
+```bash
+pnpm install
+echo "OURA_API_TOKEN=your_token_here" > .dev.vars
+pnpm connect-local   # writes Claude Desktop config pointing at localhost:8787
+pnpm dev             # keep running in a separate terminal
+```
+
+Then fully quit Claude Desktop (Cmd+Q) and relaunch. Run `pnpm bootstrap` when you're ready to deploy.
+
 ## Local development
 
 ```bash
