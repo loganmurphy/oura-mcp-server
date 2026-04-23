@@ -1,6 +1,14 @@
 {
   "name": "oura-mcp-server",
   "version": "1.0.0",
+  "description": "Cloudflare Worker MCP server exposing Oura Ring health data as tools for Claude",
+  "license": "MIT",
+  "homepage": "https://github.com/loganmurphy/oura-mcp-server",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/loganmurphy/oura-mcp-server.git"
+  },
+  "keywords": ["mcp", "oura", "claude", "cloudflare-workers", "health", "wearables"],
   "private": true,
   "scripts": {
     "lint": "oxlint --config .oxlintrc.json --deny-warnings src scripts",
