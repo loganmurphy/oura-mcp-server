@@ -162,7 +162,7 @@ async function handleDateRangeTool(
   return jsonResponse(ok(id, {
     content: [{ type: "text", text: JSON.stringify({
       data:   allItems,
-      _cache: cache.hits.size > 0 ? "partial" : "miss",
+      _cache: "miss",
     }, null, 2) }],
   }));
 }
