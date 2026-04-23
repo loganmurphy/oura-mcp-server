@@ -21,7 +21,7 @@ Tools are split across two MCP server endpoints to stay within Claude Desktop's 
 | `/mcp/sleep` | `personal_info`, `daily_sleep`, `sleep_sessions`, `daily_readiness`, `daily_spo2` |
 | `/mcp/activity` | `daily_activity`, `heart_rate`, `workouts`, `daily_stress` |
 
-On a partial cache hit the worker streams the cached portion to the client immediately via SSE, fetches only the missing date range from Oura, then sends the merged complete result. Empty responses (data not yet synced from the ring) are never cached. Pass `skip_cache: true` on any tool call to bypass the cache entirely.
+On a partial cache hit the worker fetches only the missing date range from Oura and merges it with the cached portion before responding. Empty responses (data not yet synced from the ring) are never cached. Pass `skip_cache: true` on any tool call to bypass the cache entirely.
 
 ## Requirements
 
@@ -193,8 +193,12 @@ lsof -ti :8787 | xargs kill -9
 pnpm dev
 ```
 
+**Today's data missing**
+- The Oura v2 API does not expose same-day data in real time — daily scores (sleep, readiness, activity) are computed end-of-day, and workouts can lag several hours even after they appear in the app. This is an Oura API limitation; the app has a direct ring connection the API does not.
+- For historical data that should be available but isn't, open the Oura app and trigger a manual sync, then ask Claude again
+
 **Sleep/activity data missing or empty (data not synced yet)**
-- Oura processes session data after you wake up — the daily score arrives quickly but full HRV, stage breakdown, and heart rate data can take several hours
+- Full HRV, stage breakdown, and heart rate detail can take several hours after waking to appear in the API
 - Ask Claude to re-fetch with the cache bypassed: *"pull my sleep sessions for today with skip_cache: true"*
 - Or bypass cache for an entire endpoint at the URL level (useful during testing): append `?no_cache` to the MCP endpoint in `claude_desktop_config.json`, e.g. `.../mcp/sleep?no_cache`
 - Empty responses are never cached, so retrying later will always hit Oura fresh
@@ -230,8 +234,8 @@ pnpm dev
 
 ```
 src/
-  index.ts       Worker entry — MCP routing + SSE streaming
-  cache.ts       D1 cache layer (per-day TTL, partial hit detection)
+  index.ts       Worker entry — MCP routing and tool dispatch
+  cache.ts       D1 cache layer (per-day TTL, partial hit merging)
   oura.ts        Oura API client
   tools.ts       MCP tool definitions (SLEEP_TOOLS / ACTIVITY_TOOLS)
 migrations/

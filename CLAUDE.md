@@ -65,23 +65,19 @@ POST /mcp/sleep or /mcp/activity
 
 ### Cache strategy (`src/cache.ts`)
 
-`handleDateRangeTool` is the most complex path. It:
+`handleDateRangeTool` handles three paths:
 1. Enumerates all dates in the requested range via `datesInRange()`
 2. Queries D1 for cached rows — TTL is **1h today / 6h yesterday / 24h older**
 3. **All cached** → returns JSON immediately
-4. **Partial/no cache** → opens a `TransformStream`, returns SSE response, then:
-   - Writes cached dates as a partial SSE event (if any hits)
-   - Fetches only the missing date sub-range from Oura
-   - Writes the merged complete result as a final SSE event
-   - Caches new items via `ctx.waitUntil()` (non-blocking)
+4. **Partial/no cache** → fetches only the missing date sub-range from Oura, merges with cache hits, returns JSON, caches new items via `ctx.waitUntil()` (non-blocking)
 
 Multi-session days (e.g. nap + main sleep in `sleep_sessions`) are stored as an array under one `date_key` row via `groupByDay()`.
 
-**Empty responses are never cached.** Oura processes session data after waking — the daily score syncs quickly but full HRV/stage/HR data can lag by several hours. An empty `data: []` response means "not ready yet", not "no data", so caching it would serve stale emptiness until TTL expires.
+**Empty responses are never cached.** Oura's v2 API does not expose same-day data in real time — daily scores are computed end-of-day, and even workouts can lag several hours. An empty `data: []` means "not ready yet", so caching it would serve stale emptiness until TTL expires.
 
 **Cache bypass — two levels:**
 - `skip_cache: true` tool argument — per-call, Claude can pass this when data seems stale
-- `?no_cache` query param on the endpoint URL — per-request, bypasses cache for all tools in that request; useful for `curl` smoke tests
+- `?no_cache` query param on the endpoint URL — per-request; useful for `curl` smoke tests
 
 Neither path writes to the cache.
 

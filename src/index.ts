@@ -10,7 +10,6 @@ import {
   getWorkouts,
 } from "./oura";
 import {
-  CacheResult,
   datesInRange,
   defaultEnd,
   defaultStart,
@@ -61,22 +60,6 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-// SSE is used for partial cache hits so the cached portion ships before the Oura fetch finishes.
-const enc = new TextEncoder();
-
-function sseChunk(obj: unknown): Uint8Array {
-  return enc.encode(`data: ${JSON.stringify(obj)}\n\n`);
-}
-
-function sseResponse(readable: ReadableStream): Response {
-  return new Response(readable, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      ...CORS,
-    },
-  });
-}
 
 type DateArgs = { start_date?: string; end_date?: string };
 type DatetimeArgs = { start_datetime?: string; end_datetime?: string };
@@ -129,11 +112,6 @@ function groupByDay(items: Array<{ day: string } & Record<string, unknown>>) {
   return map;
 }
 
-/**
- * Date-range tool dispatch:
- *  - Full cache hit → plain JSON
- *  - Partial / miss → SSE: cached chunk first (if any), then Oura fetch, then merged result
- */
 async function handleDateRangeTool(
   id: string | number | null,
   toolName: string,
@@ -148,8 +126,8 @@ async function handleDateRangeTool(
   const dates = datesInRange(start, end);
   const metric = toolName.replace("oura_", "");
 
-  const cache: CacheResult = skipCache
-    ? { hits: new Map(), misses: dates }
+  const cache = skipCache
+    ? { hits: new Map<string, unknown>(), misses: dates }
     : await getCachedRange(db, metric, dates);
 
   if (cache.misses.length === 0) {
@@ -162,65 +140,31 @@ async function handleDateRangeTool(
     }));
   }
 
-  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
-  const writer = writable.getWriter();
+  // Fetch only the span covering missing dates, then merge with cache hits.
+  const missStart = cache.misses[0]!;
+  const missEnd   = cache.misses[cache.misses.length - 1]!;
+  const freshResp = (await fetchFromOura(toolName, { start_date: missStart, end_date: missEnd }, token)) as
+    { data: Array<{ day: string } & Record<string, unknown>> };
 
-  const work = async () => {
-    try {
-      if (cache.hits.size > 0) {
-        const cachedItems = dates.flatMap((d) => {
-          const v = cache.hits.get(d);
-          return v === undefined ? [] : Array.isArray(v) ? v : [v];
-        });
-        await writer.write(sseChunk(ok(id, {
-          content: [{ type: "text", text: JSON.stringify({
-            data:            cachedItems,
-            _cache:          "partial",
-            _cached_dates:   [...cache.hits.keys()],
-            _fetching_dates: cache.misses,
-          }, null, 2) }],
-          _partial: true,
-        })));
-      }
+  const freshByDay = groupByDay(freshResp.data);
+  const allItems = dates.flatMap((d) => {
+    const v = cache.hits.get(d) ?? freshByDay.get(d);
+    return v === undefined ? [] : Array.isArray(v) ? v : [v];
+  });
 
-      const missStart = cache.misses[0]!;
-      const missEnd   = cache.misses[cache.misses.length - 1]!;
-      const freshResp = (await fetchFromOura(toolName, { start_date: missStart, end_date: missEnd }, token)) as
-        { data: Array<{ day: string } & Record<string, unknown>> };
+  // Empty Oura responses usually mean "not synced yet" — don't cache them or
+  // we serve stale emptiness until the TTL expires.
+  const toCache = [...freshByDay.entries()].map(([dateKey, data]) => ({ dateKey, data }));
+  if (toCache.length > 0 && !skipCache) {
+    ctx.waitUntil(setCachedRange(db, metric, toCache));
+  }
 
-      const freshByDay = groupByDay(freshResp.data);
-      const allItems = dates.flatMap((d) => {
-        const v = cache.hits.get(d) ?? freshByDay.get(d);
-        return v === undefined ? [] : Array.isArray(v) ? v : [v];
-      });
-
-      await writer.write(sseChunk(ok(id, {
-        content: [{ type: "text", text: JSON.stringify({
-          data:   allItems,
-          _cache: cache.hits.size > 0 ? "partial" : "miss",
-        }, null, 2) }],
-      })));
-
-      // Empty Oura responses usually mean "not synced yet" — don't cache them or
-      // we serve stale emptiness until the TTL expires.
-      const toCache = [...freshByDay.entries()].map(([dateKey, data]) => ({ dateKey, data }));
-      if (toCache.length > 0 && !skipCache) {
-        ctx.waitUntil(setCachedRange(db, metric, toCache));
-      }
-
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      await writer.write(sseChunk(ok(id, {
-        content: [{ type: "text", text: `Error: ${message}` }],
-        isError: true,
-      })));
-    } finally {
-      await writer.close();
-    }
-  };
-
-  ctx.waitUntil(work());
-  return sseResponse(readable);
+  return jsonResponse(ok(id, {
+    content: [{ type: "text", text: JSON.stringify({
+      data:   allItems,
+      _cache: cache.hits.size > 0 ? "partial" : "miss",
+    }, null, 2) }],
+  }));
 }
 
 async function handleSingletonTool(
