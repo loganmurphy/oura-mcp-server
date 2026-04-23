@@ -39,7 +39,7 @@ function makeEnv(token = "test-token"): { OURA_API_TOKEN: string; DB: D1Database
 }
 
 function makeCtx(): ExecutionContext {
-  return { waitUntil: vi.fn(), passThroughOnException: vi.fn() };
+  return { waitUntil: vi.fn(), passThroughOnException: vi.fn(), props: {} };
 }
 
 function jsonRpc(method: string, params?: Record<string, unknown>, id: number = 1) {
