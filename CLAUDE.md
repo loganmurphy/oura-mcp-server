@@ -11,9 +11,14 @@ pnpm cf-typegen   # Regenerate worker-configuration.d.ts from wrangler.jsonc bin
 pnpm bootstrap      # Interactive wizard — provisions D1, deploys Worker, sets up Zero Trust, wires Claude Desktop
 pnpm connect-local  # Wire Claude Desktop to the local dev server (localhost:8787) — no Cloudflare needed
 pnpm reset          # Clear .dev.vars + wrangler.jsonc (use before re-running bootstrap against a different CF account)
+pnpm lint           # oxlint (typescript/no-explicit-any + recommended rules, --deny-warnings)
+pnpm test           # Vitest unit tests
+pnpm coverage       # Vitest + v8 coverage (≥90% threshold)
 npx tsc --noEmit -p tsconfig.scripts.json   # Type-check the bootstrap script
 npx tsc --noEmit                             # Type-check the Worker (no build step — wrangler bundles via esbuild)
 ```
+
+Pre-commit hooks are managed by **lefthook** (`lefthook.yml`). They install automatically on `pnpm install` and run lint + both typechecks in parallel before every commit. To run manually: `pnpm lefthook run pre-commit`.
 
 D1 migrations:
 ```bash
@@ -60,7 +65,7 @@ POST /mcp/sleep or /mcp/activity
       → tools/call       dispatch to one of three handlers:
           handleSingletonTool()    personal_info — D1 singleton cache, 24h TTL
           handleHeartRateTool()    heart_rate — no cache (datetime-keyed, not date-keyed)
-          handleDateRangeTool()    all other tools — per-day D1 cache with SSE streaming
+          handleDateRangeTool()    all other tools — per-day D1 cache, returns plain JSON
 ```
 
 ### Cache strategy (`src/cache.ts`)
