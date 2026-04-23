@@ -6,10 +6,12 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 
-import { banner, c, ok, warn, fail } from "./prompts";
+import { banner, c, ok, warn, fail, info } from "./prompts";
 
 const DEV_VARS_PATH = path.resolve(process.cwd(), ".dev.vars");
+const SCHEMA_PATH = path.resolve(process.cwd(), "migrations/001_init.sql");
 
 const CLAUDE_CFG_PATH = (() => {
   switch (process.platform) {
@@ -97,6 +99,21 @@ fs.writeFileSync(CLAUDE_CFG_PATH, JSON.stringify(config, null, 2) + "\n");
 if (fs.existsSync(bak)) fs.unlinkSync(bak);
 
 ok(`Claude Desktop config updated — ${c.dim(CLAUDE_CFG_PATH)}`);
+
+// Apply schema to the local Miniflare D1 so the cache table exists before first use.
+// wrangler dev always uses local storage — this never touches the remote database.
+info("Applying schema to local D1...");
+const migration = spawnSync(
+  "npx", ["wrangler", "d1", "execute", "oura-cache", "--local", "--file", SCHEMA_PATH],
+  { stdio: ["ignore", "inherit", "inherit"] },
+);
+if (migration.status !== 0) {
+  warn("Schema migration failed — run manually before starting dev:");
+  console.log(`  ${c.cyan(`npx wrangler d1 execute oura-cache --local --file=${SCHEMA_PATH}`)}`);
+} else {
+  ok("Local D1 schema ready");
+}
+
 console.log(`
   ${c.bold("Next steps:")}
     1. ${c.cyan("pnpm dev")}          keep this running in another terminal

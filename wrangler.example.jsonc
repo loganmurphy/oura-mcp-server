@@ -9,9 +9,10 @@
   // reachable.
   "preview_urls": false,
 
-  // D1 cache database
-  // 1. Run: wrangler d1 create oura-cache
-  // 2. Copy the printed database_id and paste it below
+  // D1 cache database.
+  // `wrangler dev` always binds to a local Miniflare SQLite store — it never
+  // reads or writes the remote D1. Only `wrangler deploy` (and
+  // `wrangler d1 execute --remote`) touch the production database.
   "d1_databases": [
     {
       "binding": "DB",

@@ -272,14 +272,19 @@ function writeWranglerConfig(d1DatabaseId: string): void {
   ok(`Wrote wrangler.jsonc with database_id ${c.dim(d1DatabaseId)}`);
 }
 
-async function applyD1Schema(client: Cloudflare, accountId: string, dbId: string): Promise<void> {
+function applyD1Schema(apiToken: string, accountId: string): void {
   step(6, "D1 schema migration");
 
   if (!fs.existsSync(SCHEMA_PATH)) throw new Error(`Missing schema file ${SCHEMA_PATH}`);
-  const sql = fs.readFileSync(SCHEMA_PATH, "utf8");
-
   info("Applying migrations/001_init.sql...");
-  await client.d1.database.query(dbId, { account_id: accountId, sql });
+  const result = spawnSync(
+    "npx", ["wrangler", "d1", "execute", D1_NAME, "--remote", "--file", SCHEMA_PATH],
+    {
+      stdio: ["ignore", "inherit", "inherit"],
+      env: { ...process.env, CLOUDFLARE_API_TOKEN: apiToken, CLOUDFLARE_ACCOUNT_ID: accountId },
+    },
+  );
+  if (result.status !== 0) throw new Error("D1 schema migration failed");
   ok("Schema applied");
 }
 
@@ -714,7 +719,7 @@ async function main(): Promise<void> {
 
   const dbId = await ensureD1(client, account.id);
   writeWranglerConfig(dbId);
-  await applyD1Schema(client, account.id, dbId);
+  applyD1Schema(apiToken, account.id);
   const ouraToken = await ensureOuraToken();
   deployWorker(apiToken, account.id);
   await setWorkerSecret(client, account.id, ouraToken);
