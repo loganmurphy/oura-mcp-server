@@ -65,10 +65,10 @@ POST /mcp/sleep or /mcp/activity
 
 ### Cache strategy (`src/cache.ts`)
 
-`handleDateRangeTool` handles three paths:
+`handleDateRangeTool`:
 1. Enumerates all dates in the requested range via `datesInRange()`
 2. Queries D1 for cached rows — TTL is **1h today / 6h yesterday / 24h older**
-3. **All cached** → returns JSON immediately
+3. **Full cache hit** → returns JSON immediately
 4. **Partial/no cache** → fetches only the missing date sub-range from Oura, merges with cache hits, returns JSON, caches new items via `ctx.waitUntil()` (non-blocking)
 
 Multi-session days (e.g. nap + main sleep in `sleep_sessions`) are stored as an array under one `date_key` row via `groupByDay()`.
