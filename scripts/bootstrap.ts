@@ -1,6 +1,5 @@
 import Cloudflare from "cloudflare";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { execSync, spawnSync } from "node:child_process";
 
@@ -8,6 +7,7 @@ import {
   banner, c, confirm, closePrompts, info, ok, pick,
   prompt, promptHidden, pressEnter, step, warn,
 } from "./prompts";
+import { claudeCfgPath, loadDevVars, saveDevVars, slugify } from "./utils";
 
 const WORKER_NAME = "oura-mcp-server";
 const D1_NAME = "oura-cache";
@@ -19,52 +19,11 @@ const OURA_SECRET_NAME = "OURA_API_TOKEN";
 const CF_SIGNUP_URL = "https://dash.cloudflare.com/sign-up";
 const CF_API_TOKENS_URL = "https://dash.cloudflare.com/profile/api-tokens";
 
-const CLAUDE_CFG_PATH = (() => {
-  switch (process.platform) {
-    case "darwin":
-      return path.join(
-        os.homedir(),
-        "Library/Application Support/Claude/claude_desktop_config.json",
-      );
-    case "win32":
-      return path.join(
-        process.env["APPDATA"] ?? path.join(os.homedir(), "AppData/Roaming"),
-        "Claude",
-        "claude_desktop_config.json",
-      );
-    default:
-      return path.join(
-        process.env["XDG_CONFIG_HOME"] ?? path.join(os.homedir(), ".config"),
-        "Claude",
-        "claude_desktop_config.json",
-      );
-  }
-})();
-
+const CLAUDE_CFG_PATH = claudeCfgPath();
 const DEV_VARS_PATH = path.resolve(process.cwd(), ".dev.vars");
 const WRANGLER_JSONC_PATH = path.resolve(process.cwd(), "wrangler.jsonc");
 const WRANGLER_EXAMPLE_PATH = path.resolve(process.cwd(), "wrangler.example.jsonc");
 const SCHEMA_PATH = path.resolve(process.cwd(), "migrations/001_init.sql");
-
-function loadDevVars(): Record<string, string> {
-  const vars: Record<string, string> = {};
-  if (!fs.existsSync(DEV_VARS_PATH)) return vars;
-  for (const line of fs.readFileSync(DEV_VARS_PATH, "utf8").split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-    vars[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
-  }
-  return vars;
-}
-
-function saveDevVars(vars: Record<string, string>): void {
-  const existing = loadDevVars();
-  const merged = { ...existing, ...vars };
-  const content = Object.entries(merged).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
-  fs.writeFileSync(DEV_VARS_PATH, content);
-}
 
 function openBrowser(url: string): void {
   const cmd =
@@ -115,7 +74,7 @@ async function promptApiToken(): Promise<string> {
 async function ensureApiToken(): Promise<{ client: Cloudflare; apiToken: string }> {
   step(1, "Connect to Cloudflare");
 
-  const saved = loadDevVars()["CLOUDFLARE_API_TOKEN"] ?? process.env["CLOUDFLARE_API_TOKEN"];
+  const saved = loadDevVars(DEV_VARS_PATH)["CLOUDFLARE_API_TOKEN"] ?? process.env["CLOUDFLARE_API_TOKEN"];
   if (saved) {
     const client = new Cloudflare({ apiToken: saved });
     try {
@@ -128,7 +87,7 @@ async function ensureApiToken(): Promise<{ client: Cloudflare; apiToken: string 
       const msg = err instanceof Error ? err.message : String(err);
       warn(`Saved API token isn't working: ${c.dim(msg)}`);
       console.log(`  ${c.dim("Removing it from .dev.vars and asking for a new one.")}`);
-      const current = loadDevVars();
+      const current = loadDevVars(DEV_VARS_PATH);
       delete current["CLOUDFLARE_API_TOKEN"];
       fs.writeFileSync(
         DEV_VARS_PATH,
@@ -158,7 +117,7 @@ async function ensureApiToken(): Promise<{ client: Cloudflare; apiToken: string 
     const msg = err instanceof Error ? err.message : "Unknown auth error";
     throw new Error(`Couldn't verify credentials: ${msg}`);
   }
-  saveDevVars({ CLOUDFLARE_API_TOKEN: apiToken });
+  saveDevVars(DEV_VARS_PATH, { CLOUDFLARE_API_TOKEN: apiToken });
   return { client, apiToken };
 }
 
@@ -171,7 +130,7 @@ async function pickAccount(client: Cloudflare): Promise<{ id: string; name: stri
   }
   if (accounts.length === 0) throw new Error("No Cloudflare accounts found");
 
-  const saved = loadDevVars()["CLOUDFLARE_ACCOUNT_ID"] ?? process.env["CLOUDFLARE_ACCOUNT_ID"];
+  const saved = loadDevVars(DEV_VARS_PATH)["CLOUDFLARE_ACCOUNT_ID"] ?? process.env["CLOUDFLARE_ACCOUNT_ID"];
   if (saved) {
     const match = accounts.find((a) => a.id === saved);
     if (match) {
@@ -197,7 +156,7 @@ async function pickAccount(client: Cloudflare): Promise<{ id: string; name: stri
     ok(`Using ${c.cyan(selected.name)}`);
   }
 
-  saveDevVars({ CLOUDFLARE_ACCOUNT_ID: selected.id });
+  saveDevVars(DEV_VARS_PATH, { CLOUDFLARE_ACCOUNT_ID: selected.id });
   return selected;
 }
 
@@ -211,7 +170,7 @@ async function ensureWorkersSubdomain(
     const sub = (res as { subdomain?: string }).subdomain;
     if (sub) {
       ok(`workers.dev subdomain: ${c.cyan(`${sub}.workers.dev`)}`);
-      saveDevVars({ WORKER_SUBDOMAIN: sub });
+      saveDevVars(DEV_VARS_PATH, { WORKER_SUBDOMAIN: sub });
       return sub;
     }
   } catch (e) {
@@ -229,7 +188,7 @@ async function ensureWorkersSubdomain(
       });
       const sub = (res as { subdomain?: string }).subdomain ?? chosen;
       ok(`workers.dev subdomain: ${c.cyan(`${sub}.workers.dev`)}`);
-      saveDevVars({ WORKER_SUBDOMAIN: sub });
+      saveDevVars(DEV_VARS_PATH, { WORKER_SUBDOMAIN: sub });
       return sub;
     } catch (e) {
       const msg = (e as Error).message ?? "";
@@ -291,7 +250,7 @@ function applyD1Schema(apiToken: string, accountId: string): void {
 async function ensureOuraToken(): Promise<string> {
   step(7, "Oura Personal Access Token");
 
-  const existing = loadDevVars()[OURA_SECRET_NAME];
+  const existing = loadDevVars(DEV_VARS_PATH)[OURA_SECRET_NAME];
   if (existing) {
     const reuse = await confirm(`Found existing Oura token in .dev.vars — use it?`, true);
     if (reuse) {
@@ -314,7 +273,7 @@ async function ensureOuraToken(): Promise<string> {
 
   const token = await promptHidden("Paste your Oura token (hidden)");
   if (!token) throw new Error("Oura token cannot be empty");
-  saveDevVars({ [OURA_SECRET_NAME]: token });
+  saveDevVars(DEV_VARS_PATH, { [OURA_SECRET_NAME]: token });
   ok("Token saved to .dev.vars");
   return token;
 }
@@ -347,14 +306,6 @@ async function setWorkerSecret(client: Cloudflare, accountId: string, value: str
   ok(`Secret ${c.cyan(OURA_SECRET_NAME)} set`);
 }
 
-function slugify(name: string, fallback = "oura-mcp"): string {
-  // workers.dev subdomain rules: 3-63 chars, a-z / 0-9 / -, no leading/trailing -.
-  const slug = name.toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 63);
-  return slug.length >= 3 ? slug : fallback;
-}
 
 async function ensureAccessEnabled(client: Cloudflare, accountId: string): Promise<void> {
   // Fresh accounts need a Zero Trust organization before Access APIs work.
@@ -421,7 +372,7 @@ async function setupZeroTrust(
 
   // client_secret is only returned on create — so reuse requires both the saved
   // secret locally and a matching token still present on Cloudflare.
-  const saved = loadDevVars();
+  const saved = loadDevVars(DEV_VARS_PATH);
   const savedClientId = saved["CF_ACCESS_CLIENT_ID"];
   const savedClientSecret = saved["CF_ACCESS_CLIENT_SECRET"];
 
@@ -493,7 +444,7 @@ async function setupZeroTrust(
     // Save before deleting the old token so a delete failure still leaves us with
     // a working replacement in .dev.vars. The actual delete happens after the
     // policy block swaps to the new token — CF refuses (error 12139) otherwise.
-    saveDevVars({ CF_ACCESS_CLIENT_ID: clientId, CF_ACCESS_CLIENT_SECRET: clientSecret });
+    saveDevVars(DEV_VARS_PATH, { CF_ACCESS_CLIENT_ID: clientId, CF_ACCESS_CLIENT_SECRET: clientSecret });
   }
 
   const POLICY_NAME = "Allow oura-mcp-server service token";

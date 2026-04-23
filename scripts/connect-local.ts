@@ -4,44 +4,15 @@
  */
 
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { banner, c, ok, warn, fail, info } from "./prompts";
+import { claudeCfgPath, loadDevVars } from "./utils";
 
 const DEV_VARS_PATH = path.resolve(process.cwd(), ".dev.vars");
 const SCHEMA_PATH = path.resolve(process.cwd(), "migrations/001_init.sql");
-
-const CLAUDE_CFG_PATH = (() => {
-  switch (process.platform) {
-    case "darwin":
-      return path.join(os.homedir(), "Library/Application Support/Claude/claude_desktop_config.json");
-    case "win32":
-      return path.join(
-        process.env["APPDATA"] ?? path.join(os.homedir(), "AppData/Roaming"),
-        "Claude", "claude_desktop_config.json",
-      );
-    default:
-      return path.join(
-        process.env["XDG_CONFIG_HOME"] ?? path.join(os.homedir(), ".config"),
-        "Claude", "claude_desktop_config.json",
-      );
-  }
-})();
-
-function loadDevVars(): Record<string, string> {
-  const vars: Record<string, string> = {};
-  if (!fs.existsSync(DEV_VARS_PATH)) return vars;
-  for (const line of fs.readFileSync(DEV_VARS_PATH, "utf8").split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-    vars[trimmed.slice(0, eq).trim()] = trimmed.slice(eq + 1).trim();
-  }
-  return vars;
-}
+const CLAUDE_CFG_PATH = claudeCfgPath();
 
 const BASE_URL = "http://localhost:8787";
 
@@ -62,7 +33,7 @@ banner("Connect Claude Desktop → local dev server", [
 ]);
 
 // Warn if OURA_API_TOKEN isn't in .dev.vars yet
-const vars = loadDevVars();
+const vars = loadDevVars(DEV_VARS_PATH);
 if (!vars["OURA_API_TOKEN"]) {
   warn("OURA_API_TOKEN not found in .dev.vars");
   console.log(`  Add it before starting the dev server:`);

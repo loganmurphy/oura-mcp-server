@@ -30,3 +30,6 @@ wrangler.jsonc.bak
 
 # OS
 .DS_Store
+
+# Test coverage output
+coverage/

@@ -275,7 +275,7 @@ async function handleMcp(
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (request.method === "OPTIONS") {
-      return new Response(null, { headers: CORS });
+      return new Response(null, { status: 204, headers: CORS });
     }
 
     const url = new URL(request.url);
