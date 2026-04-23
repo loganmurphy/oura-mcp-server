@@ -23,7 +23,7 @@ export const warn = (msg: string)  => console.log(`  ${c.yellow("!")} ${msg}`);
 export const fail = (msg: string)  => console.log(`  ${c.red("✗")} ${msg}`);
 
 // Strip ANSI escape codes for visual-length calculations.
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
+const ANSI_RE = /\u001b\[[0-9;]*m/g;
 const visualLen = (s: string) => s.replace(ANSI_RE, "").length;
 const padVisual = (s: string, width: number) =>
   s + " ".repeat(Math.max(0, width - visualLen(s)));

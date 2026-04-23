@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   getPersonalInfo,
   getDailySleep,
@@ -14,7 +14,7 @@ import {
 const TOKEN = "test-token";
 
 function mockFetch(status: number, body: unknown) {
-  return vi.spyOn(global, "fetch").mockResolvedValueOnce(
+  return vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
     new Response(JSON.stringify(body), { status }),
   );
 }

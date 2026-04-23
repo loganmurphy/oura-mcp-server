@@ -312,7 +312,6 @@ async function ensureAccessEnabled(client: Cloudflare, accountId: string): Promi
   // Probe first — if it's already there we're done.
   const probe = async () => {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       for await (const _ of client.zeroTrust.access.applications.list({ account_id: accountId })) break;
       return true;
     } catch (e) {
@@ -341,6 +340,11 @@ async function ensureAccessEnabled(client: Cloudflare, accountId: string): Promi
   throw new Error(`Zero Trust still not enabled after 3 checks. Complete signup at ${dashUrl}, then re-run pnpm bootstrap.`);
 }
 
+// Cloudflare SDK Zero Trust responses include fields not yet in the type stubs.
+type CFApp    = { id?: string; domain?: string };
+type CFToken  = { id?: string; client_id?: string; client_secret?: string; name?: string; expires_at?: string };
+type CFPolicy = { id?: string; include?: Array<{ service_token?: { token_id?: string } }> };
+
 async function setupZeroTrust(
   client: Cloudflare, accountId: string, workerDomain: string,
 ): Promise<{ clientId: string; clientSecret: string }> {
@@ -350,8 +354,7 @@ async function setupZeroTrust(
 
   let appId: string | undefined;
   for await (const a of client.zeroTrust.access.applications.list({ account_id: accountId })) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const domain = (a as any).domain;
+    const domain = (a as CFApp).domain;
     if (domain === workerDomain) { appId = a.id; break; }
   }
 
@@ -388,8 +391,7 @@ async function setupZeroTrust(
   if (savedClientId && savedClientSecret) {
     for await (const t of client.zeroTrust.access.serviceTokens.list({ account_id: accountId })) {
       if (t.client_id === savedClientId && t.id) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const expiresAt = (t as any).expires_at as string | undefined;
+        const expiresAt = (t as CFToken).expires_at;
         const nearExpiry = expiresAt
           ? new Date(expiresAt).getTime() - Date.now() < 14 * 24 * 60 * 60 * 1000
           : false;
@@ -432,13 +434,11 @@ async function setupZeroTrust(
       account_id: accountId,
       name: SERVICE_TOKEN_NAME,
       // CF applies the 1-year default when `duration` is omitted.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any);
+    } as unknown as Parameters<typeof client.zeroTrust.access.serviceTokens.create>[0]) as CFToken;
     svcId = svc.id!;
     clientId = svc.client_id!;
     clientSecret = svc.client_secret!;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const expiresAt = (svc as any).expires_at as string | undefined;
+    const expiresAt = svc.expires_at;
     const expStr = expiresAt ? `, expires ${new Date(expiresAt).toISOString().slice(0, 10)}` : ", no expiry";
     ok(`Service token created ${c.dim(`(${SERVICE_TOKEN_NAME}${expStr})`)}`);
     // Save before deleting the old token so a delete failure still leaves us with
@@ -450,8 +450,7 @@ async function setupZeroTrust(
   const POLICY_NAME = "Allow oura-mcp-server service token";
   let policyOk = false;
   for await (const p of client.zeroTrust.access.applications.policies.list(appId, { account_id: accountId })) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const include = (p as any).include as Array<{ service_token?: { token_id?: string } }> | undefined;
+    const include = (p as CFPolicy).include;
     if (include?.some((rule) => rule.service_token?.token_id === svcId)) {
       ok("Reusing existing Access policy");
       policyOk = true;
@@ -460,16 +459,16 @@ async function setupZeroTrust(
   }
 
   if (!policyOk) {
-    // SDK type defs are incomplete for policy create, so cast.
-    await client.zeroTrust.access.applications.policies.create(appId, {
-      account_id: accountId,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...({
+    // SDK type defs are incomplete for policy create — cast to bridge the gap.
+    await client.zeroTrust.access.applications.policies.create(
+      appId,
+      {
+        account_id: accountId,
         name: POLICY_NAME,
         decision: "non_identity",
         include: [{ service_token: { token_id: svcId } }],
-      } as any),
-    });
+      } as unknown as Parameters<typeof client.zeroTrust.access.applications.policies.create>[1],
+    );
     ok("Access policy attached");
   }
 
@@ -478,8 +477,7 @@ async function setupZeroTrust(
   if (supersededTokenId) {
     try {
       for await (const p of client.zeroTrust.access.applications.policies.list(appId, { account_id: accountId })) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const include = (p as any).include as Array<{ service_token?: { token_id?: string } }> | undefined;
+        const include = (p as CFPolicy).include;
         if (p.id && include?.some((rule) => rule.service_token?.token_id === supersededTokenId)) {
           await client.zeroTrust.access.applications.policies.delete(appId, p.id, { account_id: accountId });
         }
@@ -500,9 +498,9 @@ interface McpRemoteEntry {
   env?: Record<string, string>;
 }
 
-function mergeClaudeDesktopConfig(
+async function mergeClaudeDesktopConfig(
   workerDomain: string, clientId: string, clientSecret: string,
-): boolean {
+): Promise<boolean> {
   step(11, "Claude Desktop config");
 
   // Secrets live in `env` (mcp-remote expands ${VAR} in --header values) rather
@@ -536,9 +534,8 @@ function mergeClaudeDesktopConfig(
     } catch (err) {
       warn("Couldn't parse existing config:");
       console.log(`  ${c.dim(err instanceof Error ? err.message : String(err))}`);
-      const proceed = confirm("Skip this step? You can paste the snippet manually later.", true);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (proceed as any) {
+      const proceed = await confirm("Skip this step? You can paste the snippet manually later.", true);
+      if (proceed) {
         printManualSnippet(workerDomain, clientId, clientSecret);
         return false;
       }
@@ -675,7 +672,7 @@ async function main(): Promise<void> {
   deployWorker(apiToken, account.id);
   await setWorkerSecret(client, account.id, ouraToken);
   const { clientId, clientSecret } = await setupZeroTrust(client, account.id, workerDomain);
-  const configUpdated = mergeClaudeDesktopConfig(workerDomain, clientId, clientSecret);
+  const configUpdated = await mergeClaudeDesktopConfig(workerDomain, clientId, clientSecret);
 
   console.log();
   banner("✅  Setup complete!", [
