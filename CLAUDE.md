@@ -76,7 +76,7 @@ POST /mcp/sleep or /mcp/activity
 
 Multi-session days (e.g. nap + main sleep in `sleep_sessions`) are stored as an array under one `date_key` row via `groupByDay()`.
 
-**Empty responses are never cached.** Oura's v2 API does not expose same-day data in real time — daily scores are computed end-of-day, and even workouts can lag several hours. An empty `data: []` means "not ready yet", so caching it would serve stale emptiness until TTL expires.
+**Empty responses are never cached.** An empty `data: []` typically means the ring hasn't synced yet — open the Oura app to trigger a sync. Caching an empty response would serve stale emptiness until TTL expires, so empty results are always passed through uncached.
 
 **Cache bypass — two levels:**
 - `skip_cache: true` tool argument — per-call, Claude can pass this when data seems stale
