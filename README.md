@@ -1,13 +1,12 @@
 # oura-mcp-server
 
-[![CI](https://github.com/loganmurphy/oura-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/loganmurphy/oura-mcp-server/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/loganmurphy/oura-mcp-server/ci.yml?label=CI)](https://github.com/loganmurphy/oura-mcp-server/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-5F7FFF?logo=buy-me-a-coffee&logoColor=white)](https://www.buymeacoffee.com/loganmurphc)
 
 A lightweight [Model Context Protocol](https://modelcontextprotocol.io) server that exposes your [Oura Ring](https://ouraring.com) data as tools for Claude. Runs on Cloudflare Workers with a D1 cache layer for fast repeated queries.
 
 > **Platform support:** currently works with **Claude Desktop** only. Web and mobile support is coming soon.
-
-<a href="https://www.buymeacoffee.com/loganmurphc"><img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=&slug=loganmurphc&button_colour=5F7FFF&font_colour=ffffff&font_family=Lato&outline_colour=000000&coffee_colour=FFDD00" /></a>
 
 ## Architecture
 
@@ -236,6 +235,12 @@ pnpm dev
 ## Roadmap
 
 - **Web & mobile support** — currently requires Claude Desktop. A built-in OAuth layer is planned so any MCP-compatible client (Claude.ai web, mobile) can connect without manual config.
+
+---
+
+If this saved you some time, a coffee is always appreciated!
+
+[![Buy Me a Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-blue.png)](https://www.buymeacoffee.com/loganmurphc)
 
 ## Project structure
 
