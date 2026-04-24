@@ -1,9 +1,12 @@
 # oura-mcp-server
 
-[![CI](https://github.com/loganmurphy/oura-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/loganmurphy/oura-mcp-server/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/loganmurphy/oura-mcp-server/ci.yml?label=CI)](https://github.com/loganmurphy/oura-mcp-server/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-5F7FFF?logo=buy-me-a-coffee&logoColor=white)](https://www.buymeacoffee.com/loganmurphc)
 
 A lightweight [Model Context Protocol](https://modelcontextprotocol.io) server that exposes your [Oura Ring](https://ouraring.com) data as tools for Claude. Runs on Cloudflare Workers with a D1 cache layer for fast repeated queries.
+
+> **Platform support:** currently works with **Claude Desktop** only. Web and mobile support is coming soon.
 
 ## Architecture
 
@@ -231,16 +234,26 @@ pnpm dev
 
 ## Roadmap
 
-- **Oura OAuth** — the server currently uses a Personal Access Token (personal use only). A future version will support the full Oura OAuth flow so this can be shared as a general-purpose server. The PAT approach is intentional for now to avoid incurring OAuth infrastructure costs.
+- **Web & mobile support** — currently requires Claude Desktop. A built-in OAuth layer is planned so any MCP-compatible client (Claude.ai web, mobile) can connect without manual config.
 
 ## Project structure
 
 ```
 src/
-  index.ts       Worker entry — MCP routing and tool dispatch
-  cache.ts       D1 cache layer (per-day TTL, partial hit merging)
-  oura.ts        Oura API client
-  tools.ts       MCP tool definitions (SLEEP_TOOLS / ACTIVITY_TOOLS)
+  index.ts          Worker entry — MCP routing and tool dispatch
+  cache.ts          D1 cache layer (per-day TTL, partial hit merging)
+  oura.ts           Oura API client
+  tools.ts          MCP tool definitions (SLEEP_TOOLS / ACTIVITY_TOOLS)
+scripts/
+  bootstrap.ts      Interactive setup wizard (D1, Worker deploy, Zero Trust, Claude Desktop config)
+  connect-local.ts  Wire Claude Desktop to the local dev server
+  utils.ts          Shared helpers (prompts, platform detection)
 migrations/
-  001_init.sql   D1 schema
+  001_init.sql      D1 schema
 ```
+
+---
+
+If this saved you some time, a coffee is always appreciated!
+
+[![Buy Me a Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-blue.png)](https://www.buymeacoffee.com/loganmurphc)
