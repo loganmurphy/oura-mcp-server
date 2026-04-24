@@ -4,7 +4,6 @@ import { SLEEP_TOOLS, ACTIVITY_TOOLS, type ToolDef } from "../tools";
 const ALL_TOOLS = [...SLEEP_TOOLS, ...ACTIVITY_TOOLS];
 
 const SLEEP_TOOL_NAMES = [
-  "oura_personal_info",
   "oura_daily_sleep",
   "oura_sleep_sessions",
   "oura_daily_readiness",
@@ -13,13 +12,9 @@ const SLEEP_TOOL_NAMES = [
 
 const ACTIVITY_TOOL_NAMES = [
   "oura_daily_activity",
-  "oura_heart_rate",
   "oura_workouts",
   "oura_daily_stress",
 ];
-
-// Tools that accept date ranges and expose skip_cache
-const CACHEABLE_TOOLS = ALL_TOOLS.filter((t) => t.name !== "oura_heart_rate");
 
 function hasValidSchema(tool: ToolDef) {
   return (
@@ -29,7 +24,7 @@ function hasValidSchema(tool: ToolDef) {
 }
 
 describe("SLEEP_TOOLS", () => {
-  it("contains exactly the expected 5 tools", () => {
+  it("contains exactly the expected 4 tools", () => {
     expect(SLEEP_TOOLS.map((t) => t.name)).toEqual(SLEEP_TOOL_NAMES);
   });
 
@@ -47,7 +42,7 @@ describe("SLEEP_TOOLS", () => {
 });
 
 describe("ACTIVITY_TOOLS", () => {
-  it("contains exactly the expected 4 tools", () => {
+  it("contains exactly the expected 3 tools", () => {
     expect(ACTIVITY_TOOLS.map((t) => t.name)).toEqual(ACTIVITY_TOOL_NAMES);
   });
 
@@ -65,8 +60,8 @@ describe("ACTIVITY_TOOLS", () => {
 });
 
 describe("skip_cache property", () => {
-  it("is present on all cacheable tools", () => {
-    for (const tool of CACHEABLE_TOOLS) {
+  it("is present on all tools", () => {
+    for (const tool of ALL_TOOLS) {
       expect(
         tool.inputSchema.properties["skip_cache"],
         `${tool.name} missing skip_cache`,
@@ -74,13 +69,8 @@ describe("skip_cache property", () => {
     }
   });
 
-  it("is absent on oura_heart_rate (not date-keyed)", () => {
-    const heartRate = ACTIVITY_TOOLS.find((t) => t.name === "oura_heart_rate")!;
-    expect(heartRate.inputSchema.properties["skip_cache"]).toBeUndefined();
-  });
-
-  it("has type boolean on all cacheable tools", () => {
-    for (const tool of CACHEABLE_TOOLS) {
+  it("has type boolean on all tools", () => {
+    for (const tool of ALL_TOOLS) {
       expect(
         tool.inputSchema.properties["skip_cache"]?.type,
         `${tool.name} skip_cache not boolean`,
@@ -90,12 +80,8 @@ describe("skip_cache property", () => {
 });
 
 describe("date-range tools", () => {
-  const dateRangeTools = ALL_TOOLS.filter(
-    (t) => t.name !== "oura_personal_info" && t.name !== "oura_heart_rate",
-  );
-
-  it("all have start_date and end_date properties", () => {
-    for (const tool of dateRangeTools) {
+  it("all tools have start_date and end_date properties", () => {
+    for (const tool of ALL_TOOLS) {
       expect(
         tool.inputSchema.properties["start_date"],
         `${tool.name} missing start_date`,
@@ -106,14 +92,19 @@ describe("date-range tools", () => {
       ).toBeDefined();
     }
   });
-});
 
-describe("oura_heart_rate", () => {
-  const tool = ACTIVITY_TOOLS.find((t) => t.name === "oura_heart_rate")!;
+  it("end_date description mentions inclusive on all tools", () => {
+    for (const tool of ALL_TOOLS) {
+      const desc = tool.inputSchema.properties["end_date"]?.description ?? "";
+      expect(desc, `${tool.name} end_date should mention inclusive`).toContain("inclusive");
+    }
+  });
 
-  it("has start_datetime and end_datetime instead of date params", () => {
-    expect(tool.inputSchema.properties["start_datetime"]).toBeDefined();
-    expect(tool.inputSchema.properties["end_datetime"]).toBeDefined();
-    expect(tool.inputSchema.properties["start_date"]).toBeUndefined();
+  it("non-daily_sleep end_date descriptions note server adds +1 day", () => {
+    const exclusiveTools = ALL_TOOLS.filter((t) => t.name !== "oura_daily_sleep");
+    for (const tool of exclusiveTools) {
+      const desc = tool.inputSchema.properties["end_date"]?.description ?? "";
+      expect(desc, `${tool.name} end_date should mention server adds +1 day`).toContain("+1 day");
+    }
   });
 });

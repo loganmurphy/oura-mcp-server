@@ -4,8 +4,6 @@ import {
   getDailySleep,
   getDailySpo2,
   getDailyStress,
-  getHeartRate,
-  getPersonalInfo,
   getSleepSessions,
   getWorkouts,
 } from "./oura";
@@ -14,9 +12,7 @@ import {
   defaultEnd,
   defaultStart,
   getCachedRange,
-  getCachedSingleton,
   setCachedRange,
-  setCachedSingleton,
 } from "./cache";
 import { ACTIVITY_TOOLS, SLEEP_TOOLS, type ToolDef } from "./tools";
 
@@ -60,9 +56,21 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-
 type DateArgs = { start_date?: string; end_date?: string };
-type DatetimeArgs = { start_datetime?: string; end_datetime?: string };
+
+// Empirically verified: the Oura daily_sleep endpoint treats end_date as inclusive,
+// but every other date-range endpoint treats it as exclusive. Add one day to end_date
+// for all endpoints except daily_sleep so callers can use a consistent inclusive
+// convention across all tools.
+function addOneDay(dateStr: string): string {
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function exclusiveEnd(endDate: string | undefined): string {
+  return addOneDay(endDate ?? defaultEnd());
+}
 
 async function fetchFromOura(
   name: string,
@@ -70,23 +78,22 @@ async function fetchFromOura(
   token: string,
 ): Promise<unknown> {
   const d = args as DateArgs;
-  const dt = args as DatetimeArgs;
 
   switch (name) {
-    case "oura_personal_info":    return getPersonalInfo(token);
+    // daily_sleep end_date is inclusive — pass through as-is
     case "oura_daily_sleep":      return getDailySleep(token, d.start_date, d.end_date);
-    case "oura_sleep_sessions":   return getSleepSessions(token, d.start_date, d.end_date);
-    case "oura_daily_readiness":  return getDailyReadiness(token, d.start_date, d.end_date);
-    case "oura_daily_activity":   return getDailyActivity(token, d.start_date, d.end_date);
-    case "oura_heart_rate":       return getHeartRate(token, dt.start_datetime, dt.end_datetime);
-    case "oura_daily_spo2":       return getDailySpo2(token, d.start_date, d.end_date);
-    case "oura_workouts":         return getWorkouts(token, d.start_date, d.end_date);
-    case "oura_daily_stress":     return getDailyStress(token, d.start_date, d.end_date);
+    // all other date-range endpoints treat end_date as exclusive — add one day
+    case "oura_sleep_sessions":   return getSleepSessions(token, d.start_date, exclusiveEnd(d.end_date));
+    case "oura_daily_readiness":  return getDailyReadiness(token, d.start_date, exclusiveEnd(d.end_date));
+    case "oura_daily_activity":   return getDailyActivity(token, d.start_date, exclusiveEnd(d.end_date));
+    case "oura_daily_spo2":       return getDailySpo2(token, d.start_date, exclusiveEnd(d.end_date));
+    case "oura_workouts":         return getWorkouts(token, d.start_date, exclusiveEnd(d.end_date));
+    case "oura_daily_stress":     return getDailyStress(token, d.start_date, exclusiveEnd(d.end_date));
     default:                      throw new Error(`Unknown tool: ${name}`);
   }
 }
 
-/** Tools with per-day cacheable items (response.data[].day field). */
+/** All tools use per-day cacheable items (response.data[].day field). */
 const DATE_KEYED_TOOLS = new Set([
   "oura_daily_sleep",
   "oura_sleep_sessions",
@@ -167,41 +174,6 @@ async function handleDateRangeTool(
   }));
 }
 
-async function handleSingletonTool(
-  id: string | number | null,
-  toolName: string,
-  token: string,
-  db: D1Database,
-  ctx: ExecutionContext,
-  skipCache = false,
-): Promise<Response> {
-  const metric = toolName.replace("oura_", "");
-  const cached = skipCache ? null : await getCachedSingleton(db, metric);
-  if (cached !== null) {
-    return jsonResponse(ok(id, {
-      content: [{ type: "text", text: JSON.stringify({ ...cached as object, _cache: "hit" }, null, 2) }],
-    }));
-  }
-
-  const data = await fetchFromOura(toolName, {}, token);
-  ctx.waitUntil(setCachedSingleton(db, metric, data));
-  return jsonResponse(ok(id, {
-    content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-  }));
-}
-
-// heart_rate is datetime-keyed, not date-keyed — doesn't fit the per-day cache.
-async function handleHeartRateTool(
-  id: string | number | null,
-  args: Record<string, unknown>,
-  token: string,
-): Promise<Response> {
-  const data = await fetchFromOura("oura_heart_rate", args, token);
-  return jsonResponse(ok(id, {
-    content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-  }));
-}
-
 async function handleMcp(
   request: Request,
   env: Env,
@@ -245,12 +217,6 @@ async function handleMcp(
 
       try {
         const skipCache = forceSkipCache || toolArgs["skip_cache"] === true;
-        if (toolName === "oura_personal_info") {
-          return await handleSingletonTool(id, toolName, env.OURA_API_TOKEN, env.DB, ctx, skipCache);
-        }
-        if (toolName === "oura_heart_rate") {
-          return await handleHeartRateTool(id, toolArgs, env.OURA_API_TOKEN);
-        }
         if (DATE_KEYED_TOOLS.has(toolName)) {
           return await handleDateRangeTool(id, toolName, toolArgs, env.OURA_API_TOKEN, env.DB, ctx, skipCache);
         }
