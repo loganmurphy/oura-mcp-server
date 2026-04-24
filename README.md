@@ -24,8 +24,8 @@ Tools are split across two MCP server endpoints to stay within Claude Desktop's 
 
 | Endpoint | Tools |
 |---|---|
-| `/mcp/sleep` | `personal_info`, `daily_sleep`, `sleep_sessions`, `daily_readiness`, `daily_spo2` |
-| `/mcp/activity` | `daily_activity`, `heart_rate`, `workouts`, `daily_stress` |
+| `/mcp/sleep` | `daily_sleep`, `sleep_sessions`, `daily_readiness`, `daily_spo2` |
+| `/mcp/activity` | `daily_activity`, `workouts`, `daily_stress` |
 
 On a partial cache hit the worker fetches only the missing date range from Oura and merges it with the cached portion before responding. Empty responses (data not yet synced from the ring) are never cached. Pass `skip_cache: true` on any tool call to bypass the cache entirely.
 
@@ -157,19 +157,26 @@ Restart Claude Desktop after any config change.
 
 ## Tool reference
 
-All date params are optional and default to the last 7 days (`YYYY-MM-DD` format).
+All date params are optional and default to the last 7 days (`YYYY-MM-DD` format). All `end_date` values are **inclusive** from the caller's perspective.
 
 | Tool | Params | Returns |
 |---|---|---|
-| `oura_personal_info` | — | Age, weight, height, biological sex |
 | `oura_daily_sleep` | `start_date`, `end_date` | Sleep score + contributors |
 | `oura_sleep_sessions` | `start_date`, `end_date` | Sleep stages, HRV, HR, breathing, temp |
 | `oura_daily_readiness` | `start_date`, `end_date` | Readiness score + contributors |
 | `oura_daily_spo2` | `start_date`, `end_date` | Blood oxygen saturation |
 | `oura_daily_activity` | `start_date`, `end_date` | Steps, calories, activity minutes |
-| `oura_heart_rate` | `start_datetime`, `end_datetime` | Continuous BPM readings (ISO 8601) |
 | `oura_workouts` | `start_date`, `end_date` | Session type, duration, calories, HR |
 | `oura_daily_stress` | `start_date`, `end_date` | Stress, recovery, ruggedness scores |
+
+### Date conventions
+
+**`day` field:**
+- Sleep, readiness, and SpO2 use the **wake-up date** — a sleep starting the night of Apr 23 and ending the morning of Apr 24 has `day: "2026-04-24"`. Use today's date to get last night's data. `oura_daily_sleep` and `oura_sleep_sessions` share the same `day` field and can be joined by it.
+- Activity, workouts, and stress use the **calendar date** of the event.
+
+**`end_date` behavior:**
+All `end_date` values are **inclusive** from the caller's perspective across all tools. Internally, the Oura `daily_sleep` endpoint is the only one that treats `end_date` as inclusive; every other endpoint treats it as exclusive. The server adds +1 day automatically before calling the API for all non-daily_sleep tools, so you never need to adjust dates yourself.
 
 ## Troubleshooting
 
@@ -189,8 +196,8 @@ All date params are optional and default to the last 7 days (`YYYY-MM-DD` format
 - `mcp-remote` requires Node.js — confirm with `node --version` (needs 22 LTS; use [Volta](https://volta.sh) to match the pinned version)
 - Try clearing the mcp-remote cache: `rm -rf ~/.mcp-remote`
 
-**Only 5 tools showing instead of 9**
-- This is expected — Claude Desktop has a per-server tool cap, so tools are intentionally split across two servers (`oura-sleep` and `oura-activity`)
+**Not seeing all 7 tools (4 sleep + 3 activity)**
+- Claude Desktop has a per-server tool cap, so tools are intentionally split across two servers (`oura-sleep` and `oura-activity`)
 - Confirm both entries exist in `claude_desktop_config.json` and restart Claude Desktop
 
 **Port 8787 already in use**
@@ -199,14 +206,10 @@ lsof -ti :8787 | xargs kill -9
 pnpm dev
 ```
 
-**Today's data missing**
-- The Oura v2 API does not expose same-day data in real time — daily scores (sleep, readiness, activity) are computed end-of-day, and workouts can lag several hours even after they appear in the app. This is an Oura API limitation; the app has a direct ring connection the API does not.
-- For historical data that should be available but isn't, open the Oura app and trigger a manual sync, then ask Claude again
-
-**Sleep/activity data missing or empty (data not synced yet)**
-- Full HRV, stage breakdown, and heart rate detail can take several hours after waking to appear in the API
-- Ask Claude to re-fetch with the cache bypassed: *"pull my sleep sessions for today with skip_cache: true"*
-- Or bypass cache for an entire endpoint at the URL level (useful during testing): append `?no_cache` to the MCP endpoint in `claude_desktop_config.json`, e.g. `.../mcp/sleep?no_cache`
+**Today's sleep/activity data missing or empty**
+- Sleep scores, readiness, and SpO2 are available as soon as the ring syncs after waking — open the Oura app to trigger a sync if data isn't showing up
+- Today's activity data is live and partial while the day is still in progress (steps/calories accumulate throughout the day)
+- If data appears stale, ask Claude to re-fetch with the cache bypassed: *"pull my sleep sessions for today with skip_cache: true"*
 - Empty responses are never cached, so retrying later will always hit Oura fresh
 
 **Oura API returning 401 / Claude sees "Oura rejected the token"**

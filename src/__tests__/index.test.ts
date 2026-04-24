@@ -8,17 +8,13 @@ vi.mock("../cache", () => ({
   defaultEnd: vi.fn(() => "2026-04-22"),
   getCachedRange: vi.fn(),
   setCachedRange: vi.fn(),
-  getCachedSingleton: vi.fn(),
-  setCachedSingleton: vi.fn(),
 }));
 
 vi.mock("../oura", () => ({
-  getPersonalInfo: vi.fn(),
   getDailySleep: vi.fn(),
   getSleepSessions: vi.fn(),
   getDailyReadiness: vi.fn(),
   getDailyActivity: vi.fn(),
-  getHeartRate: vi.fn(),
   getDailySpo2: vi.fn(),
   getWorkouts: vi.fn(),
   getDailyStress: vi.fn(),
@@ -83,18 +79,14 @@ const CACHE_MISS = {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(cache.getCachedRange).mockResolvedValue(CACHE_MISS);
-  vi.mocked(cache.getCachedSingleton).mockResolvedValue(null);
   vi.mocked(cache.setCachedRange).mockResolvedValue(undefined);
-  vi.mocked(cache.setCachedSingleton).mockResolvedValue(undefined);
   vi.mocked(oura.getDailySleep).mockResolvedValue({ data: [{ day: "2026-04-15", score: 80 }] });
-  vi.mocked(oura.getPersonalInfo).mockResolvedValue({ age: 30, weight: 75 });
-  vi.mocked(oura.getHeartRate).mockResolvedValue({ data: [{ bpm: 60, timestamp: "2026-04-15T00:00:00Z" }] });
   vi.mocked(oura.getWorkouts).mockResolvedValue({ data: [] });
-  vi.mocked(oura.getDailyActivity).mockResolvedValue({ data: [] });
+  vi.mocked(oura.getDailyActivity).mockResolvedValue({ data: [], next_token: null });
   vi.mocked(oura.getDailyReadiness).mockResolvedValue({ data: [] });
   vi.mocked(oura.getDailySpo2).mockResolvedValue({ data: [] });
   vi.mocked(oura.getDailyStress).mockResolvedValue({ data: [] });
-  vi.mocked(oura.getSleepSessions).mockResolvedValue({ data: [] });
+  vi.mocked(oura.getSleepSessions).mockResolvedValue({ data: [], next_token: null });
 });
 
 // ── Routing ───────────────────────────────────────────────────────────────────
@@ -176,6 +168,8 @@ describe("tools/list", () => {
     const names = body.result.tools.map((t) => t.name);
     expect(names).toContain("oura_daily_sleep");
     expect(names).not.toContain("oura_daily_activity");
+    expect(names).not.toContain("oura_personal_info");
+    expect(names).not.toContain("oura_heart_rate");
   });
 
   it("returns ACTIVITY_TOOLS for /mcp/activity", async () => {
@@ -184,6 +178,7 @@ describe("tools/list", () => {
     const names = body.result.tools.map((t) => t.name);
     expect(names).toContain("oura_daily_activity");
     expect(names).not.toContain("oura_daily_sleep");
+    expect(names).not.toContain("oura_heart_rate");
   });
 });
 
@@ -219,46 +214,7 @@ describe("malformed JSON", () => {
   });
 });
 
-// ── tools/call ────────────────────────────────────────────────────────────────
-
-describe("tools/call — oura_personal_info (singleton)", () => {
-  it("returns cached result on hit", async () => {
-    vi.mocked(cache.getCachedSingleton).mockResolvedValueOnce({ age: 30 });
-    const res = await post("/mcp/sleep", jsonRpc("tools/call", { name: "oura_personal_info", arguments: {} }));
-    const data = await parseResult(res);
-    expect(data._cache).toBe("hit");
-    expect(oura.getPersonalInfo).not.toHaveBeenCalled();
-  });
-
-  it("fetches from Oura on miss and caches result", async () => {
-    const ctx = makeCtx();
-    const res = await post("/mcp/sleep", jsonRpc("tools/call", { name: "oura_personal_info", arguments: {} }), makeEnv(), ctx);
-    expect(res.status).toBe(200);
-    expect(oura.getPersonalInfo).toHaveBeenCalledWith("test-token");
-    expect(ctx.waitUntil).toHaveBeenCalled();
-  });
-
-  it("bypasses cache when skip_cache is true", async () => {
-    vi.mocked(cache.getCachedSingleton).mockResolvedValueOnce({ age: 99 });
-    await post("/mcp/sleep", jsonRpc("tools/call", { name: "oura_personal_info", arguments: { skip_cache: true } }));
-    expect(oura.getPersonalInfo).toHaveBeenCalled();
-  });
-});
-
-describe("tools/call — oura_heart_rate (passthrough)", () => {
-  it("calls Oura directly without touching the cache", async () => {
-    const res = await post(
-      "/mcp/activity",
-      jsonRpc("tools/call", {
-        name: "oura_heart_rate",
-        arguments: { start_datetime: "2026-04-15T00:00:00Z" },
-      }),
-    );
-    expect(res.status).toBe(200);
-    expect(oura.getHeartRate).toHaveBeenCalled();
-    expect(cache.getCachedRange).not.toHaveBeenCalled();
-  });
-});
+// ── tools/call — date-range tool (oura_daily_sleep) ──────────────────────────
 
 describe("tools/call — date-range tool (oura_daily_sleep)", () => {
   it("returns _cache: hit on full cache hit", async () => {
@@ -297,6 +253,8 @@ describe("tools/call — date-range tool (oura_daily_sleep)", () => {
   });
 });
 
+// ── tools/call — ?no_cache query param ───────────────────────────────────────
+
 describe("tools/call — ?no_cache query param", () => {
   it("bypasses cache for all tools in the request", async () => {
     vi.mocked(oura.getDailySleep).mockResolvedValueOnce({ data: [] });
@@ -315,6 +273,8 @@ describe("tools/call — ?no_cache query param", () => {
   });
 });
 
+// ── tools/call — all other date-range tools route through fetchFromOura ───────
+
 describe("tools/call — all other date-range tools route through fetchFromOura", () => {
   const dateRangeTools = [
     { tool: "oura_sleep_sessions",   endpoint: "/mcp/sleep",    mock: "getSleepSessions" },
@@ -327,13 +287,53 @@ describe("tools/call — all other date-range tools route through fetchFromOura"
 
   for (const { tool, endpoint, mock } of dateRangeTools) {
     it(`${tool} returns 200 and calls oura.${mock}`, async () => {
-      vi.mocked(oura[mock]).mockResolvedValueOnce({ data: [] });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      vi.mocked(oura[mock]).mockResolvedValueOnce({ data: [] } as any);
       const res = await post(endpoint, jsonRpc("tools/call", { name: tool, arguments: {} }));
       expect(res.status).toBe(200);
       expect(oura[mock]).toHaveBeenCalled();
     });
   }
 });
+
+// ── tools/call — exclusiveEnd: +1 day added for non-daily_sleep tools ─────────
+//
+// handleDateRangeTool passes `missEnd` (last element of cache.misses) to
+// fetchFromOura, not the original tool arg. The CACHE_MISS mock has
+// misses: ["2026-04-15", "2026-04-16", "2026-04-17"], so missEnd = "2026-04-17".
+// daily_sleep receives it unchanged; exclusive tools receive "2026-04-18" (+1).
+
+describe("tools/call — exclusiveEnd behavior", () => {
+  it("passes end_date unchanged to getDailySleep (inclusive endpoint)", async () => {
+    vi.mocked(oura.getDailySleep).mockResolvedValueOnce({ data: [] });
+    await post("/mcp/sleep", jsonRpc("tools/call", { name: "oura_daily_sleep", arguments: {} }));
+    // missEnd = "2026-04-17" from CACHE_MISS mock — passed through as-is for daily_sleep
+    expect(oura.getDailySleep).toHaveBeenCalledWith("test-token", "2026-04-15", "2026-04-17");
+  });
+
+  it("adds +1 day to end_date for oura_sleep_sessions (exclusive endpoint)", async () => {
+    vi.mocked(oura.getSleepSessions).mockResolvedValueOnce({ data: [], next_token: null });
+    await post("/mcp/sleep", jsonRpc("tools/call", { name: "oura_sleep_sessions", arguments: {} }));
+    // missEnd = "2026-04-17" → exclusiveEnd adds 1 day → "2026-04-18"
+    expect(oura.getSleepSessions).toHaveBeenCalledWith("test-token", "2026-04-15", "2026-04-18");
+  });
+
+  it("adds +1 day to end_date for oura_daily_activity (exclusive endpoint)", async () => {
+    vi.mocked(oura.getDailyActivity).mockResolvedValueOnce({ data: [], next_token: null });
+    await post("/mcp/activity", jsonRpc("tools/call", { name: "oura_daily_activity", arguments: {} }));
+    // missEnd = "2026-04-17" → exclusiveEnd adds 1 day → "2026-04-18"
+    expect(oura.getDailyActivity).toHaveBeenCalledWith("test-token", "2026-04-15", "2026-04-18");
+  });
+
+  it("adds +1 day to end_date for oura_workouts (exclusive endpoint)", async () => {
+    vi.mocked(oura.getWorkouts).mockResolvedValueOnce({ data: [] });
+    await post("/mcp/activity", jsonRpc("tools/call", { name: "oura_workouts", arguments: {} }));
+    // missEnd = "2026-04-17" → exclusiveEnd adds 1 day → "2026-04-18"
+    expect(oura.getWorkouts).toHaveBeenCalledWith("test-token", "2026-04-15", "2026-04-18");
+  });
+});
+
+// ── tools/call — groupByDay merges multiple items per day ─────────────────────
 
 describe("tools/call — groupByDay merges multiple items per day", () => {
   it("returns all items when sleep_sessions has 3 entries on the same day", async () => {
@@ -344,6 +344,7 @@ describe("tools/call — groupByDay merges multiple items per day", () => {
         { day: "2026-04-15", session: "nap2" },
         { day: "2026-04-15", session: "main" },
       ],
+      next_token: null,
     });
     const res = await post(
       "/mcp/sleep",
@@ -353,6 +354,8 @@ describe("tools/call — groupByDay merges multiple items per day", () => {
     expect(data.data).toHaveLength(3);
   });
 });
+
+// ── tools/call — unknown tool ─────────────────────────────────────────────────
 
 describe("tools/call — unknown tool", () => {
   it("returns isError: true", async () => {

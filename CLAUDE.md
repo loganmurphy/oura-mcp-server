@@ -62,10 +62,8 @@ There is no build step. Wrangler bundles `src/index.ts` directly via esbuild on 
 POST /mcp/sleep or /mcp/activity
   → handleMcp()          parse JSON-RPC, route by method
       → tools/list       return SLEEP_TOOLS or ACTIVITY_TOOLS from tools.ts
-      → tools/call       dispatch to one of three handlers:
-          handleSingletonTool()    personal_info — D1 singleton cache, 24h TTL
-          handleHeartRateTool()    heart_rate — no cache (datetime-keyed, not date-keyed)
-          handleDateRangeTool()    all other tools — per-day D1 cache, returns plain JSON
+      → tools/call       dispatch to handleDateRangeTool() for all tools
+          handleDateRangeTool()    per-day D1 cache, returns plain JSON
 ```
 
 ### Cache strategy (`src/cache.ts`)
@@ -78,7 +76,7 @@ POST /mcp/sleep or /mcp/activity
 
 Multi-session days (e.g. nap + main sleep in `sleep_sessions`) are stored as an array under one `date_key` row via `groupByDay()`.
 
-**Empty responses are never cached.** Oura's v2 API does not expose same-day data in real time — daily scores are computed end-of-day, and even workouts can lag several hours. An empty `data: []` means "not ready yet", so caching it would serve stale emptiness until TTL expires.
+**Empty responses are never cached.** An empty `data: []` typically means the ring hasn't synced yet — open the Oura app to trigger a sync. Caching an empty response would serve stale emptiness until TTL expires, so empty results are always passed through uncached.
 
 **Cache bypass — two levels:**
 - `skip_cache: true` tool argument — per-call, Claude can pass this when data seems stale
@@ -89,11 +87,17 @@ Neither path writes to the cache.
 ### Tool split
 
 Claude Desktop enforces a per-MCP-server tool cap (~5). Tools are split into two endpoints served by the same Worker:
-- `/mcp/sleep` → `SLEEP_TOOLS` (sleep, readiness, SpO2, personal info)
-- `/mcp/activity` → `ACTIVITY_TOOLS` (activity, heart rate, workouts, stress)
+- `/mcp/sleep` → `SLEEP_TOOLS` (daily_sleep, sleep_sessions, daily_readiness, daily_spo2)
+- `/mcp/activity` → `ACTIVITY_TOOLS` (daily_activity, workouts, daily_stress)
 
 Adding a new tool means: add the Oura fetch function in `oura.ts`, add the `ToolDef` to the appropriate array in `tools.ts`, add a `case` in `fetchFromOura()` in `index.ts`, and add the tool name to `DATE_KEYED_TOOLS` if it returns per-day items.
 
 ### Oura API
 
 All endpoints are under `https://api.ouraring.com/v2/usercollection/`. Date-range endpoints accept `start_date`/`end_date` (YYYY-MM-DD) and return `{ data: [...], next_token }`. Defaults to last 7 days when params are omitted. The token is passed as `Authorization: Bearer`.
+
+**Date conventions (empirically verified):**
+- Sleep/readiness/SpO2 use the **wake-up date** for the `day` field — a session starting the night of Apr 23 and ending the morning of Apr 24 has `day: "2026-04-24"`. Use today's date to get last night's data.
+- Activity/workouts/stress use the **calendar date** for the `day` field.
+- `oura_daily_sleep` `end_date` is **inclusive** (Oura API exception).
+- **All other endpoints** treat `end_date` as **exclusive** — querying through Apr 24 requires sending `end_date: "2026-04-25"` to the API. The Worker handles this transparently via `exclusiveEnd()` / `addOneDay()` in `fetchFromOura`, so all tool callers use the same inclusive `end_date` convention.

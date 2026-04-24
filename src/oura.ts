@@ -1,5 +1,7 @@
 const OURA_BASE = "https://api.ouraring.com";
 
+type OuraItem = Record<string, unknown>;
+
 function dateRange(startDate?: string, endDate?: string) {
   const params = new URLSearchParams();
   if (startDate) params.set("start_date", startDate);
@@ -32,16 +34,53 @@ async function ouraget(token: string, path: string, params: URLSearchParams) {
   return res.json();
 }
 
-export async function getPersonalInfo(token: string) {
-  return ouraget(token, "/v2/usercollection/personal_info", new URLSearchParams());
+// ── Response noise stripping ──────────────────────────────────────────────────
+//
+// Several Oura endpoints include raw per-minute/per-5-min time-series arrays
+// that are not useful for LLM conversations but are large enough to overflow
+// the context window (e.g. met.items ≈ 1 440 floats per day, class_5_min ≈
+// 288 chars per day). Strip them before caching or returning.
+
+function stripActivityNoise(item: OuraItem): OuraItem {
+  const result = { ...item };
+  delete result["met"];
+  delete result["class_5_min"];
+  return result;
 }
+
+function dropItemsArray(nested: unknown): unknown {
+  if (nested !== null && typeof nested === "object" && !Array.isArray(nested)) {
+    const copy = { ...(nested as OuraItem) };
+    delete copy["items"];
+    return copy;
+  }
+  return nested;
+}
+
+function stripSleepNoise(item: OuraItem): OuraItem {
+  const result = { ...item };
+  // Remove raw per-5-min/30-sec time-series strings — these are large encoded
+  // arrays that add thousands of tokens without aiding LLM analysis.
+  delete result["sleep_phase_5_min"];
+  delete result["sleep_phase_30_sec"];
+  delete result["app_sleep_phase_5_min"];
+  delete result["movement_30_sec"];
+  // Keep hrv/heart_rate summary stats but drop the items arrays
+  result["hrv"] = dropItemsArray(result["hrv"]);
+  result["heart_rate"] = dropItemsArray(result["heart_rate"]);
+  return result;
+}
+
+// ── API functions ─────────────────────────────────────────────────────────────
 
 export async function getDailySleep(token: string, startDate?: string, endDate?: string) {
   return ouraget(token, "/v2/usercollection/daily_sleep", dateRange(startDate, endDate));
 }
 
 export async function getSleepSessions(token: string, startDate?: string, endDate?: string) {
-  return ouraget(token, "/v2/usercollection/sleep", dateRange(startDate, endDate));
+  const resp = await ouraget(token, "/v2/usercollection/sleep", dateRange(startDate, endDate)) as
+    { data: OuraItem[]; next_token: string | null };
+  return { ...resp, data: resp.data.map(stripSleepNoise) };
 }
 
 export async function getDailyReadiness(token: string, startDate?: string, endDate?: string) {
@@ -49,20 +88,9 @@ export async function getDailyReadiness(token: string, startDate?: string, endDa
 }
 
 export async function getDailyActivity(token: string, startDate?: string, endDate?: string) {
-  return ouraget(token, "/v2/usercollection/daily_activity", dateRange(startDate, endDate));
-}
-
-export async function getHeartRate(token: string, startDatetime?: string, endDatetime?: string) {
-  const params = new URLSearchParams();
-  if (startDatetime) {
-    params.set("start_datetime", startDatetime);
-  } else {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    params.set("start_datetime", d.toISOString());
-  }
-  if (endDatetime) params.set("end_datetime", endDatetime);
-  return ouraget(token, "/v2/usercollection/heart_rate", params);
+  const resp = await ouraget(token, "/v2/usercollection/daily_activity", dateRange(startDate, endDate)) as
+    { data: OuraItem[]; next_token: string | null };
+  return { ...resp, data: resp.data.map(stripActivityNoise) };
 }
 
 export async function getDailySpo2(token: string, startDate?: string, endDate?: string) {
