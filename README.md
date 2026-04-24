@@ -236,12 +236,6 @@ pnpm dev
 
 - **Web & mobile support** — currently requires Claude Desktop. A built-in OAuth layer is planned so any MCP-compatible client (Claude.ai web, mobile) can connect without manual config.
 
----
-
-If this saved you some time, a coffee is always appreciated!
-
-[![Buy Me a Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-blue.png)](https://www.buymeacoffee.com/loganmurphc)
-
 ## Project structure
 
 ```
@@ -257,3 +251,9 @@ scripts/
 migrations/
   001_init.sql      D1 schema
 ```
+
+---
+
+If this saved you some time, a coffee is always appreciated!
+
+[![Buy Me a Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-blue.png)](https://www.buymeacoffee.com/loganmurphc)
