@@ -246,10 +246,14 @@ If this saved you some time, a coffee is always appreciated!
 
 ```
 src/
-  index.ts       Worker entry — MCP routing and tool dispatch
-  cache.ts       D1 cache layer (per-day TTL, partial hit merging)
-  oura.ts        Oura API client
-  tools.ts       MCP tool definitions (SLEEP_TOOLS / ACTIVITY_TOOLS)
+  index.ts          Worker entry — MCP routing and tool dispatch
+  cache.ts          D1 cache layer (per-day TTL, partial hit merging)
+  oura.ts           Oura API client
+  tools.ts          MCP tool definitions (SLEEP_TOOLS / ACTIVITY_TOOLS)
+scripts/
+  bootstrap.ts      Interactive setup wizard (D1, Worker deploy, Zero Trust, Claude Desktop config)
+  connect-local.ts  Wire Claude Desktop to the local dev server
+  utils.ts          Shared helpers (prompts, platform detection)
 migrations/
-  001_init.sql   D1 schema
+  001_init.sql      D1 schema
 ```
