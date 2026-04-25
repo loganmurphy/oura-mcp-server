@@ -37,6 +37,8 @@ function makeEnv(token = "test-token"): Env {
     DB: {} as D1Database,
     OAUTH_KV: {} as KVNamespace,
     MCP_AUTH_PASSWORD: "test-password",
+    // Always allow in tests — rate limiting is tested via defaultHandler, not handleMcp.
+    RATE_LIMITER: { limit: async () => ({ success: true }) } as Env["RATE_LIMITER"],
     // OAUTH_PROVIDER is injected by OAuthProvider at runtime; not needed for
     // direct handleMcp tests.
     OAUTH_PROVIDER: {} as OAuthHelpers,
