@@ -31,6 +31,7 @@ export const SLEEP_TOOLS: ToolDef[] = [
     description:
       "Get daily sleep summary scores for a date range. " +
       "The `day` field uses the wake-up date — a sleep starting the night of Apr 23 and ending the morning of Apr 24 has day: '2026-04-24'. " +
+      "To get last night's sleep, use today's date for both start_date and end_date with skip_cache: true — the ring may not have synced yet and an empty result does NOT mean no data, it means a fresh fetch is needed. " +
       "end_date is inclusive (this endpoint is the exception — the Oura daily_sleep API is inclusive unlike all others). " +
       "Includes overall sleep score and contributors (deep sleep, efficiency, latency, REM, restfulness, timing, total sleep).",
     inputSchema: {
@@ -47,6 +48,7 @@ export const SLEEP_TOOLS: ToolDef[] = [
     description:
       "Get detailed sleep sessions including sleep stages (awake, light, deep, REM), HRV, heart rate, breathing, and temperature deviation. " +
       "The `day` field uses the wake-up date — same convention as oura_daily_sleep, so sessions can be joined to scores by the `day` field. " +
+      "For last night's sessions, use today's date with skip_cache: true — an empty result for today means the ring hasn't synced yet, not that no session exists. " +
       "end_date is inclusive — the server adds +1 day when calling the Oura API (which treats it as exclusive).",
     inputSchema: {
       type: "object",
@@ -58,6 +60,7 @@ export const SLEEP_TOOLS: ToolDef[] = [
     description:
       "Get daily readiness scores and contributors (activity balance, body temperature, HRV balance, previous day activity, previous night, recovery index, resting heart rate, sleep balance). " +
       "The `day` field uses the wake-up date — same convention as oura_daily_sleep. " +
+      "For today's readiness, use today's date with skip_cache: true — an empty result means the ring hasn't synced yet. " +
       "end_date is inclusive — the server adds +1 day when calling the Oura API.",
     inputSchema: {
       type: "object",
@@ -69,6 +72,7 @@ export const SLEEP_TOOLS: ToolDef[] = [
     description:
       "Get daily blood oxygen saturation (SpO2) averages measured during sleep. " +
       "The `day` field uses the wake-up date — same convention as oura_daily_sleep. " +
+      "For last night's SpO2, use today's date with skip_cache: true — an empty result means the ring hasn't synced yet. " +
       "Useful for spotting breathing disruptions alongside sleep data. " +
       "end_date is inclusive — the server adds +1 day when calling the Oura API.",
     inputSchema: {
