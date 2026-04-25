@@ -374,7 +374,7 @@ export const defaultHandler = {
 
 // ── Worker entry point ────────────────────────────────────────────────────────
 
-export default new OAuthProvider<Env>({
+const oauthProvider = new OAuthProvider<Env>({
   apiRoute:                    "/mcp",
   apiHandler:                  McpApiHandler,
   defaultHandler,
@@ -385,3 +385,20 @@ export default new OAuthProvider<Env>({
   accessTokenTTL:              3600 * 24 * 30,
   // Refresh tokens never expire — re-auth only needed if explicitly revoked
 });
+
+// Honor X-Forwarded-Proto from reverse proxies and tunnels (e.g. ngrok, Cloudflare).
+// OAuthProvider derives all discovery/issuer URLs from request.url, so if the
+// incoming request shows http:// but the proxy header says https, rewrite it
+// before the provider sees it — otherwise the discovery document advertises http://
+// endpoints and OAuth clients (Claude.ai, mcp-remote) reject the connection.
+export default {
+  fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if (
+      request.headers.get("x-forwarded-proto") === "https" &&
+      request.url.startsWith("http://")
+    ) {
+      request = new Request(request.url.replace(/^http:\/\//, "https://"), request);
+    }
+    return oauthProvider.fetch(request, env, ctx);
+  },
+} satisfies ExportedHandler<Env>;
