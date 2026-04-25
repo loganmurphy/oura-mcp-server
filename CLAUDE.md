@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 pnpm dev          # Start local dev server on http://localhost:8787 (Miniflare, hot reload)
 pnpm deploy       # Deploy to Cloudflare Workers (requires wrangler login)
 pnpm cf-typegen   # Regenerate worker-configuration.d.ts from wrangler.jsonc bindings
-pnpm bootstrap      # Interactive wizard — provisions D1, KV, deploys Worker, wires Claude Desktop
+pnpm bootstrap      # Interactive wizard — provisions D1, KV, deploys Worker, copies MCP URL to clipboard
 pnpm connect-local  # Wire Claude Desktop to the local dev server (localhost:8787) — no Cloudflare needed
 pnpm reset          # Clear .dev.vars + wrangler.jsonc (use before re-running bootstrap against a different CF account)
 pnpm lint           # oxlint (typescript/no-explicit-any + recommended rules, --deny-warnings)
@@ -34,17 +34,17 @@ cp wrangler.example.jsonc wrangler.jsonc
 Local secrets live in `.dev.vars` (gitignored). `pnpm bootstrap` manages this file — you should rarely need to touch it by hand:
 
 ```
-OURA_API_TOKEN=...                # Oura PAT (user-provided)
-MCP_AUTH_PASSWORD=...             # Password for the OAuth login page
-CLOUDFLARE_ACCOUNT_ID=...         # Selected during bootstrap, remembered across runs
-WORKER_SUBDOMAIN=...              # Your *.workers.dev subdomain
+OURA_API_TOKEN=...      # Oura PAT (user-provided)
+MCP_AUTH_PASSWORD=...   # Password for the OAuth login page
 ```
+
+Bootstrap state (Cloudflare account ID) is stored separately in `.bootstrap-state` — also gitignored.
 
 ### `scripts/bootstrap.ts` — auth model
 
-Bootstrap authenticates to Cloudflare via `wrangler login` — a standard browser OAuth flow that caches a token at `~/.wrangler/config/default.toml`. The script reads that token to also drive the Cloudflare SDK (for listing/creating resources that wrangler's CLI doesn't expose directly). `CLOUDFLARE_API_TOKEN` in the environment is accepted as a fallback for CI or users who prefer a manually-created token.
+Bootstrap authenticates to Cloudflare entirely via `wrangler login` — a standard browser OAuth flow. No Cloudflare SDK is used; all resource provisioning (D1, KV, Worker deploy, secrets) is done through wrangler CLI commands (`wrangler d1 list/create`, `wrangler kv namespace list/create`, `wrangler deploy`, `wrangler secret put`).
 
-Only two manual inputs: an Oura Personal Access Token and a password for the MCP server's login page. All Cloudflare resources (D1 database, KV namespace, Worker deploy, secrets) are fully automated and idempotent — re-running detects and reuses existing resources.
+Only two manual inputs: an Oura Personal Access Token and a password for the MCP server's login page. All Cloudflare resources are fully automated and idempotent — re-running detects and reuses existing resources. On completion, the MCP server URL is copied to clipboard and `https://claude.ai/settings/connectors` is opened in the browser.
 
 ## Architecture
 

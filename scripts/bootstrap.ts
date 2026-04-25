@@ -1,14 +1,12 @@
-import Cloudflare from "cloudflare";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 
 import {
   banner, c, confirm, closePrompts, info, ok, pick,
-  prompt, promptHidden, pressEnter, step, warn,
+  promptHidden, pressEnter, step, warn,
 } from "./prompts";
-import { copyToClipboard, loadDevVars, openBrowser, saveDevVars, slugify } from "./utils";
+import { copyToClipboard, loadDevVars, openBrowser, saveDevVars } from "./utils";
 
 const WORKER_NAME      = "oura-mcp-server";
 const D1_NAME          = "oura-cache";
@@ -18,109 +16,66 @@ const OURA_SECRET_NAME = "OURA_API_TOKEN";
 const AUTH_SECRET_NAME = "MCP_AUTH_PASSWORD";
 
 const DEV_VARS_PATH         = path.resolve(process.cwd(), ".dev.vars");
-// Script-only state (account ID, subdomain) lives here rather than .dev.vars
+// Script-only state (CF account ID) lives here rather than .dev.vars
 // so wrangler never picks it up as Worker bindings and generates spurious types.
 const BOOTSTRAP_STATE_PATH  = path.resolve(process.cwd(), ".bootstrap-state");
 const WRANGLER_JSONC_PATH   = path.resolve(process.cwd(), "wrangler.jsonc");
 const WRANGLER_EXAMPLE_PATH = path.resolve(process.cwd(), "wrangler.example.jsonc");
 const SCHEMA_PATH           = path.resolve(process.cwd(), "migrations/001_init.sql");
 
-// ── Cloudflare auth via wrangler OAuth ────────────────────────────────────────
+// ── Cloudflare auth + account selection via wrangler CLI ─────────────────────
 //
-// `wrangler login` runs a standard CF OAuth browser flow and caches the
-// resulting token in a platform-specific config file. We read it from
-// there so we can also drive the CF SDK (for resource listing/creation),
-// which wrangler's CLI doesn't expose for every operation we need.
-//
-// Priority: CLOUDFLARE_API_TOKEN env var → wrangler config file.
-// The env var fallback keeps CI and manual-token users working unchanged.
-//
-// Config file locations (wrangler checks these in order):
-//   macOS wrangler 4+  ~/Library/Preferences/.wrangler/config/default.toml
-//   Linux / wrangler 3 ~/.wrangler/config/default.toml
-//   XDG fallback       ~/.config/.wrangler/config/default.toml
+// All Cloudflare operations go through wrangler — no separate SDK client.
+// `wrangler login` handles the OAuth browser flow and caches credentials.
+// We run `wrangler whoami` to verify auth and parse the account table for IDs.
 
-function extractWranglerToken(): string | undefined {
-  if (process.env.CLOUDFLARE_API_TOKEN) return process.env.CLOUDFLARE_API_TOKEN;
+function wranglerWhoami(): { email: string; accounts: { id: string; name: string }[] } | null {
+  const result = spawnSync("npx", ["wrangler", "whoami"], {
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf8",
+  });
+  const out = (result.stdout ?? "") + (result.stderr ?? "");
+  if (result.status !== 0 || out.includes("not authenticated")) return null;
 
-  const candidates = [
-    path.join(os.homedir(), "Library", "Preferences", ".wrangler", "config", "default.toml"),
-    path.join(os.homedir(), ".wrangler", "config", "default.toml"),
-    path.join(os.homedir(), ".config", ".wrangler", "config", "default.toml"),
-  ];
-
-  for (const configPath of candidates) {
-    if (!fs.existsSync(configPath)) continue;
-    try {
-      const toml = fs.readFileSync(configPath, "utf8");
-      // `wrangler login`           → writes oauth_token
-      // `wrangler login --api-key` → writes api_token
-      const token =
-        toml.match(/^oauth_token\s*=\s*"([^"]+)"/m)?.[1] ??
-        toml.match(/^api_token\s*=\s*"([^"]+)"/m)?.[1];
-      if (token) return token;
-    } catch {
-      continue;
-    }
+  const email = out.match(/associated with the email\s+(\S+)/)?.[1] ?? "unknown";
+  // Parse table rows: │ Account Name │ Account ID (32 hex chars) │
+  const accounts: { id: string; name: string }[] = [];
+  for (const m of out.matchAll(/│\s+(.+?)\s+│\s+([0-9a-f]{32})\s+│/g)) {
+    accounts.push({ name: m[1]!.trim(), id: m[2]!.trim() });
   }
-  return undefined;
+  return { email, accounts };
 }
 
-async function ensureWranglerAuth(): Promise<{ client: Cloudflare }> {
+async function ensureWranglerAuth(): Promise<{ accountId: string; accountName: string }> {
   step(1, "Connect to Cloudflare");
 
-  // Fast path: already logged in (or CLOUDFLARE_API_TOKEN is set in env)
-  const existingToken = extractWranglerToken();
-  if (existingToken) {
-    const client = new Cloudflare({ apiToken: existingToken });
-    try {
-      const me = await client.user.get();
-      const email = (me as { email?: string }).email ?? "unknown";
-      ok(`Already signed in as ${c.cyan(email)}`);
-      return { client };
-    } catch {
-      // Token stale — fall through to login
-      warn("Saved credentials are no longer valid — signing in again...");
-    }
-  }
+  // Fast path: already logged in
+  let whoami = wranglerWhoami();
+  if (whoami) {
+    ok(`Already signed in as ${c.cyan(whoami.email)}`);
+  } else {
+    info("Opening Cloudflare sign-in in your browser...");
+    console.log(`  ${c.dim("No account yet? You can create a free one during this step.")}`);
+    const login = spawnSync("npx", ["wrangler", "login"], { stdio: "inherit" });
+    if (login.status !== 0) throw new Error("`wrangler login` was cancelled or failed");
 
-  // Trigger browser-based OAuth flow
-  info("Opening Cloudflare sign-in in your browser...");
-  console.log(`  ${c.dim("No account yet? You can create a free one during this step.")}`);
-  const login = spawnSync("npx", ["wrangler", "login"], { stdio: "inherit" });
-  if (login.status !== 0) throw new Error("`wrangler login` was cancelled or failed");
-
-  const token = extractWranglerToken();
-  if (!token) {
-    throw new Error(
-      "Could not read auth token from wrangler config after login.\n" +
+    whoami = wranglerWhoami();
+    if (!whoami) throw new Error(
+      "Could not verify Cloudflare credentials after login.\n" +
       `  Fallback: set ${c.cyan("CLOUDFLARE_API_TOKEN")} in your environment and re-run.`,
     );
+    ok(`Signed in as ${c.cyan(whoami.email)}`);
   }
 
-  const client = new Cloudflare({ apiToken: token });
-  try {
-    const me = await client.user.get();
-    const email = (me as { email?: string }).email ?? "unknown";
-    ok(`Signed in as ${c.cyan(email)}`);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Could not verify Cloudflare credentials: ${msg}`);
-  }
-
-  return { client };
+  return pickAccount(whoami.accounts);
 }
 
-// ── Account / subdomain ───────────────────────────────────────────────────────
-
-async function pickAccount(client: Cloudflare): Promise<{ id: string; name: string }> {
+async function pickAccount(
+  accounts: { id: string; name: string }[],
+): Promise<{ accountId: string; accountName: string }> {
   step(2, "Select Cloudflare account");
 
-  const accounts: { id: string; name: string }[] = [];
-  for await (const a of client.accounts.list({})) {
-    if (a.id && a.name) accounts.push({ id: a.id, name: a.name });
-  }
-  if (accounts.length === 0) throw new Error("No Cloudflare accounts found");
+  if (accounts.length === 0) throw new Error("No Cloudflare accounts found — try `wrangler login` again");
 
   const saved = loadDevVars(BOOTSTRAP_STATE_PATH)["CLOUDFLARE_ACCOUNT_ID"] ?? process.env["CLOUDFLARE_ACCOUNT_ID"];
   if (saved) {
@@ -128,9 +83,9 @@ async function pickAccount(client: Cloudflare): Promise<{ id: string; name: stri
     if (match) {
       info(`Using saved account — ${c.cyan(match.name)}`);
       console.log(`  ${c.dim("(Run `pnpm reset` to clear saved state and switch accounts.)")}`);
-      return match;
+      return { accountId: match.id, accountName: match.name };
     }
-    warn(`Saved account ID not found — prompting below.`);
+    warn("Saved account ID not found — prompting below.");
   }
 
   let selected: { id: string; name: string };
@@ -149,80 +104,68 @@ async function pickAccount(client: Cloudflare): Promise<{ id: string; name: stri
   }
 
   saveDevVars(BOOTSTRAP_STATE_PATH, { CLOUDFLARE_ACCOUNT_ID: selected.id });
-  return selected;
-}
-
-async function ensureWorkersSubdomain(
-  client: Cloudflare, accountId: string, accountName: string,
-): Promise<string> {
-  step(3, "workers.dev subdomain");
-
-  try {
-    const res = await client.workers.subdomains.get({ account_id: accountId });
-    const sub = (res as { subdomain?: string }).subdomain;
-    if (sub) {
-      ok(`workers.dev subdomain: ${c.cyan(`${sub}.workers.dev`)}`);
-      saveDevVars(BOOTSTRAP_STATE_PATH, { WORKER_SUBDOMAIN: sub });
-      return sub;
-    }
-  } catch (e) {
-    if (!(e as Error).message?.includes("10007")) throw e;
-  }
-
-  info("No workers.dev subdomain yet — creating one.");
-  let chosen = slugify(accountName);
-  for (let attempt = 0; attempt < 5; attempt++) {
-    try {
-      const res = await client.workers.subdomains.update({ account_id: accountId, subdomain: chosen });
-      const sub = (res as { subdomain?: string }).subdomain ?? chosen;
-      ok(`workers.dev subdomain: ${c.cyan(`${sub}.workers.dev`)}`);
-      saveDevVars(BOOTSTRAP_STATE_PATH, { WORKER_SUBDOMAIN: sub });
-      return sub;
-    } catch (e) {
-      const msg = (e as Error).message ?? "";
-      warn(`"${chosen}.workers.dev" is not available: ${c.dim(msg)}`);
-      const alt = await prompt(`Pick another subdomain (attempt ${attempt + 2}/5)`).catch(() => "");
-      if (!alt) break;
-      chosen = slugify(alt);
-    }
-  }
-  throw new Error("Couldn't register a workers.dev subdomain after 5 attempts.");
+  return { accountId: selected.id, accountName: selected.name };
 }
 
 // ── Resources ─────────────────────────────────────────────────────────────────
 
-async function ensureD1(client: Cloudflare, accountId: string): Promise<string> {
+function ensureD1(accountId: string): string {
   step(4, "D1 cache database");
 
-  for await (const db of client.d1.database.list({ account_id: accountId, name: D1_NAME })) {
-    if (db.name === D1_NAME && db.uuid) {
+  // Check for existing database
+  const listResult = spawnSync("npx", ["wrangler", "d1", "list", "--json"], {
+    stdio: ["ignore", "pipe", "pipe"], encoding: "utf8",
+    env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: accountId },
+  });
+  if (listResult.status === 0 && listResult.stdout?.trim()) {
+    const dbs = JSON.parse(listResult.stdout) as { uuid: string; name: string }[];
+    const existing = dbs.find((db) => db.name === D1_NAME);
+    if (existing?.uuid) {
       ok(`Found existing D1 database ${c.cyan(D1_NAME)}`);
-      return db.uuid;
+      return existing.uuid;
     }
   }
 
   info(`Creating D1 database "${D1_NAME}"...`);
-  const created = await client.d1.database.create({ account_id: accountId, name: D1_NAME });
-  const id = created.uuid;
-  if (!id) throw new Error("D1 create returned no uuid");
-  ok(`Created D1 database ${c.cyan(D1_NAME)} ${c.dim(`(${id})`)}`);
-  return id;
+  const createResult = spawnSync("npx", ["wrangler", "d1", "create", D1_NAME], {
+    stdio: ["ignore", "pipe", "pipe"], encoding: "utf8",
+    env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: accountId },
+  });
+  if (createResult.status !== 0) throw new Error(`D1 create failed: ${createResult.stderr?.trim()}`);
+
+  const uuid = JSON.parse(createResult.stdout.match(/\{[\s\S]*\}/)?.[0] ?? "{}").uuid as string | undefined;
+  if (!uuid) throw new Error("D1 create succeeded but couldn't parse the database UUID");
+  ok(`Created D1 database ${c.cyan(D1_NAME)} ${c.dim(`(${uuid})`)}`);
+  return uuid;
 }
 
-async function ensureKvNamespace(client: Cloudflare, accountId: string): Promise<string> {
+function ensureKvNamespace(accountId: string): string {
   step(5, "KV namespace for OAuth tokens");
 
-  for await (const ns of client.kv.namespaces.list({ account_id: accountId })) {
-    if ((ns as { title?: string }).title === KV_NAME && ns.id) {
+  // Check for existing namespace
+  const listResult = spawnSync("npx", ["wrangler", "kv", "namespace", "list"], {
+    stdio: ["ignore", "pipe", "pipe"], encoding: "utf8",
+    env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: accountId },
+  });
+  if (listResult.status === 0 && listResult.stdout?.trim()) {
+    const namespaces = JSON.parse(listResult.stdout) as { id: string; title: string }[];
+    const existing = namespaces.find((ns) => ns.title === KV_NAME);
+    if (existing?.id) {
       ok(`Found existing KV namespace ${c.cyan(KV_NAME)}`);
-      return ns.id;
+      return existing.id;
     }
   }
 
   info(`Creating KV namespace "${KV_NAME}"...`);
-  const created = await client.kv.namespaces.create({ account_id: accountId, title: KV_NAME });
-  const id = created.id;
-  if (!id) throw new Error("KV create returned no id");
+  const createResult = spawnSync("npx", ["wrangler", "kv", "namespace", "create", KV_NAME], {
+    stdio: ["ignore", "pipe", "pipe"], encoding: "utf8",
+    env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: accountId },
+  });
+  if (createResult.status !== 0) throw new Error(`KV create failed: ${createResult.stderr?.trim()}`);
+
+  // Output contains a JSON fragment: { "binding": "...", "id": "..." }
+  const id = createResult.stdout.match(/"id":\s*"([^"]+)"/)?.[1];
+  if (!id) throw new Error("KV create succeeded but couldn't parse the namespace ID");
   ok(`Created KV namespace ${c.cyan(KV_NAME)} ${c.dim(`(${id})`)}`);
   return id;
 }
@@ -269,10 +212,7 @@ async function ensureOuraToken(): Promise<string> {
 
   if (!(await confirm("Do you already have an Oura Personal Access Token?", false))) {
     info("Opening the Oura token page in your browser...");
-    const cmd = process.platform === "darwin" ? `open "${OURA_PAT_URL}"`
-      : process.platform === "win32" ? `start "" "${OURA_PAT_URL}"`
-      : `xdg-open "${OURA_PAT_URL}"`;
-    try { require("child_process").execSync(cmd, { stdio: "ignore" }); } catch { /* non-fatal */ }
+    openBrowser(OURA_PAT_URL);
     console.log("  Click 'Create New Personal Access Token', name it, copy it.");
     await pressEnter("Press Enter when you have it copied...");
   }
@@ -296,7 +236,7 @@ async function promptMcpPassword(): Promise<string> {
   }
 
   console.log("  This password protects your MCP server from unauthorized access.");
-  console.log("  Claude Desktop prompts for it once; the token then lasts 30 days.");
+  console.log("  You'll enter it once when connecting Claude; the token lasts 30 days.");
   console.log(`  ${c.dim("Stored as a Worker secret — never in code or logs.")}\n`);
 
   const password = await promptHidden("Choose a password (hidden)");
@@ -308,35 +248,45 @@ async function promptMcpPassword(): Promise<string> {
 
 // ── Deployment ────────────────────────────────────────────────────────────────
 
-function deployWorker(accountId: string): void {
+function deployWorker(accountId: string): string {
   step(10, "Deploy Worker to Cloudflare");
 
   info("Running `wrangler deploy`... (first deploy takes ~20s)");
-  // wrangler uses its own cached OAuth token — no CLOUDFLARE_API_TOKEN needed.
+  // Capture stdout so we can parse the workers.dev URL; stream stderr live.
   const result = spawnSync("npx", ["wrangler", "deploy"], {
-    stdio: ["ignore", "inherit", "inherit"],
+    stdio: ["ignore", "pipe", "inherit"],
+    encoding: "utf8",
     env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: accountId },
   });
+
+  // Stream captured stdout to the terminal so users see deploy progress.
+  if (result.stdout) process.stdout.write(result.stdout);
   if (result.status !== 0) throw new Error(`wrangler deploy failed (exit ${result.status})`);
-  ok("Worker deployed");
+
+  // wrangler deploy prints the workers.dev URL after "Deployed ... triggers:"
+  const match = result.stdout?.match(/https:\/\/[\w-]+\.[\w-]+\.workers\.dev/);
+  if (!match) throw new Error("Deploy succeeded but couldn't parse the Worker URL from output.");
+
+  ok(`Worker deployed → ${c.cyan(match[0])}`);
+  return match[0];
 }
 
-async function setWorkerSecrets(
-  client: Cloudflare, accountId: string,
+function setWorkerSecrets(
+  accountId: string,
   ouraToken: string, mcpPassword: string,
-): Promise<void> {
+): void {
   step(11, "Set Worker secrets");
 
   for (const [name, value] of [
     [OURA_SECRET_NAME, ouraToken],
     [AUTH_SECRET_NAME, mcpPassword],
   ] as const) {
-    await client.workers.scripts.secrets.update(WORKER_NAME, {
-      account_id: accountId,
-      name,
-      text: value,
-      type: "secret_text",
-    });
+    const result = spawnSync(
+      "npx", ["wrangler", "secret", "put", name],
+      { input: value, stdio: ["pipe", "ignore", "inherit"], encoding: "utf8",
+        env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: accountId } },
+    );
+    if (result.status !== 0) throw new Error(`Failed to set secret ${name}`);
     ok(`Secret ${c.cyan(name)} set`);
   }
 }
@@ -367,24 +317,29 @@ async function main(): Promise<void> {
     return;
   }
 
-  const { client } = await ensureWranglerAuth();
-  const account    = await pickAccount(client);
-  const subdomain  = await ensureWorkersSubdomain(client, account.id, account.name);
-  const workerDomain = `${WORKER_NAME}.${subdomain}.workers.dev`;
+  const { accountId, accountName: _ } = await ensureWranglerAuth();
 
-  // Read-only checks done — show plan before touching anything.
-  let existingD1 = false;
-  for await (const db of client.d1.database.list({ account_id: account.id, name: D1_NAME })) {
-    if (db.name === D1_NAME) { existingD1 = true; break; }
-  }
-  let existingKv = false;
-  for await (const ns of client.kv.namespaces.list({ account_id: account.id })) {
-    if ((ns as { title?: string }).title === KV_NAME) { existingKv = true; break; }
-  }
+  // Read-only checks — show plan before touching anything.
+  const d1List = spawnSync("npx", ["wrangler", "d1", "list", "--json"], {
+    stdio: ["ignore", "pipe", "pipe"], encoding: "utf8",
+    env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: accountId },
+  });
+  const kvList = spawnSync("npx", ["wrangler", "kv", "namespace", "list"], {
+    stdio: ["ignore", "pipe", "pipe"], encoding: "utf8",
+    env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: accountId },
+  });
+  const dbs = d1List.status === 0 && d1List.stdout?.trim()
+    ? (JSON.parse(d1List.stdout) as { name: string }[])
+    : [];
+  const kvs = kvList.status === 0 && kvList.stdout?.trim()
+    ? (JSON.parse(kvList.stdout) as { title: string }[])
+    : [];
+  const existingD1 = dbs.some((db) => db.name === D1_NAME);
+  const existingKv = kvs.some((ns) => ns.title === KV_NAME);
+
   console.log();
   banner("Ready to provision", [
-    `Cloudflare account:  ${c.cyan(account.name)} ${c.dim(`(${account.id})`)}`,
-    `Worker URL:          ${c.cyan(`https://${workerDomain}`)}`,
+    `Cloudflare account:  ${c.cyan(accountId)}`,
     "",
     `${c.bold("The following will happen:")}`,
     `  • D1 database "${D1_NAME}" — ${existingD1 ? c.dim("reuse existing") : c.green("create new")}`,
@@ -398,32 +353,32 @@ async function main(): Promise<void> {
     return;
   }
 
-  const dbId        = await ensureD1(client, account.id);
-  const kvId        = await ensureKvNamespace(client, account.id);
+  const dbId        = ensureD1(accountId);
+  const kvId        = ensureKvNamespace(accountId);
   writeWranglerConfig(dbId, kvId);
 
   step(6.5, "Regenerate Worker types");
   info("Running `wrangler types`...");
   const typegen = spawnSync("npx", ["wrangler", "types"], {
     stdio: ["ignore", "inherit", "inherit"],
-    env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: account.id },
+    env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: accountId },
   });
   if (typegen.status !== 0) warn("Type generation failed — run `pnpm cf-typegen` manually");
   else ok("worker-configuration.d.ts updated");
 
-  applyD1Schema(account.id);
+  applyD1Schema(accountId);
   const ouraToken   = await ensureOuraToken();
   const mcpPassword = await promptMcpPassword();
-  deployWorker(account.id);
-  await setWorkerSecrets(client, account.id, ouraToken, mcpPassword);
+  const workerUrl   = deployWorker(accountId);
+  setWorkerSecrets(accountId, ouraToken, mcpPassword);
 
-  const mcpUrl = `https://${workerDomain}/mcp`;
+  const mcpUrl = `${workerUrl}/mcp`;
   const clipped = copyToClipboard(mcpUrl);
   openBrowser("https://claude.ai/settings/connectors");
 
   console.log();
   banner("✅  Setup complete!", [
-    `Worker:  ${c.cyan(`https://${workerDomain}`)}`,
+    `Worker:  ${c.cyan(workerUrl)}`,
     "",
     `${c.bold("Connect Claude:")} ${clipped ? "MCP URL copied to clipboard —" : "paste this URL:"}`,
     `  ${c.cyan(mcpUrl)}`,
