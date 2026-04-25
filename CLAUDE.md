@@ -88,6 +88,13 @@ The auth UI is a password form served at `GET /authorize`. On submit it calls `e
 
 `src/__tests__/mocks/cloudflare-workers.ts` provides a minimal `WorkerEntrypoint` stub — `cloudflare:workers` is not available in Node's ESM loader, so `vitest.config.ts` maps it to this stub (with `server.deps.inline` forcing `@cloudflare/workers-oauth-provider` through Vite's pipeline so the alias applies to its internal imports too).
 
+**End-to-end testing with ngrok:** Claude.ai web and mobile require HTTPS. Use ngrok to expose the local dev server:
+```bash
+pnpm dev          # terminal 1
+ngrok http 8787   # terminal 2 — produces https://xxx.ngrok-free.app
+```
+Use the ngrok URL in place of the Cloudflare Worker URL when testing Claude.ai web/mobile integrations. See README for the full pre-merge checklist.
+
 ### Cache strategy (`src/cache.ts`)
 
 `handleDateRangeTool`:
