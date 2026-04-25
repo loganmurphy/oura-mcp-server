@@ -32,10 +32,10 @@
   // password attempts. 10 POST requests per IP per 60 seconds is plenty
   // for legitimate use. Simulated automatically by Miniflare in local dev.
   // namespace_id is an arbitrary positive integer scoped to this Worker.
-  "rate_limiting": [
+  "ratelimits": [
     {
-      "binding": "RATE_LIMITER",
-      "namespace_id": 1001,
+      "name": "RATE_LIMITER",
+      "namespace_id": "1001",
       "simple": {
         "limit": 10,
         "period": 60
