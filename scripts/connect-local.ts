@@ -24,13 +24,9 @@ const OURA_PAT_URL        = "https://cloud.ouraring.com/personal-access-tokens";
 const BASE_URL = "http://localhost:8787";
 
 const entries = {
-  "oura-sleep": {
+  "oura": {
     command: "npx",
-    args: ["-y", "mcp-remote", `${BASE_URL}/mcp/sleep`],
-  },
-  "oura-activity": {
-    command: "npx",
-    args: ["-y", "mcp-remote", `${BASE_URL}/mcp/activity`],
+    args: ["-y", "mcp-remote", `${BASE_URL}/mcp`],
   },
 };
 
@@ -124,7 +120,11 @@ async function main() {
   }
 
   const existing = config.mcpServers ?? {};
-  const others = Object.keys(existing).filter((k) => k !== "oura-sleep" && k !== "oura-activity");
+  // Remove old split entries if migrating from a pre-consolidation config.
+  delete existing["oura-sleep"];
+  delete existing["oura-activity"];
+
+  const others = Object.keys(existing).filter((k) => k !== "oura");
   if (others.length > 0) {
     console.log(`  Preserving ${others.length} existing MCP server(s): ${c.dim(others.join(", "))}`);
   }
@@ -144,7 +144,7 @@ async function main() {
   ${c.bold("Next steps:")}
     1. ${c.cyan("pnpm dev")}          keep this running in another terminal
     2. Quit Claude Desktop fully ${c.dim("(Cmd+Q)")} and relaunch
-    3. Ask: ${c.cyan('"What was my sleep score last night?"')}
+    3. Ask: ${c.cyan('"How did I sleep last night?"')} or ${c.cyan('"How many steps today?"')}
        A browser window will open for the password prompt on first connection.
 
   ${c.dim('Run `pnpm bootstrap` when you\'re ready to deploy to Cloudflare.')}

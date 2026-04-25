@@ -24,7 +24,6 @@ const DATE_RANGE_PROPS = {
   ...SKIP_CACHE_PROP,
 } as const;
 
-// Split into two servers because Claude Desktop enforces a per-server tool cap (~5).
 export const SLEEP_TOOLS: ToolDef[] = [
   {
     name: "oura_daily_sleep",
@@ -117,3 +116,6 @@ export const ACTIVITY_TOOLS: ToolDef[] = [
     },
   },
 ];
+
+/** All tools on a single /mcp endpoint. */
+export const OURA_TOOLS: ToolDef[] = [...SLEEP_TOOLS, ...ACTIVITY_TOOLS];

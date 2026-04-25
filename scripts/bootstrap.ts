@@ -336,14 +336,11 @@ interface McpRemoteEntry {
 async function mergeClaudeDesktopConfig(workerDomain: string): Promise<boolean> {
   step(12, "Claude Desktop config");
 
-  const build = (endpoint: string): McpRemoteEntry => ({
-    command: "npx",
-    args: ["-y", "mcp-remote", `https://${workerDomain}/mcp/${endpoint}`],
-  });
-
   const newEntries = {
-    "oura-sleep":    build("sleep"),
-    "oura-activity": build("activity"),
+    "oura": {
+      command: "npx",
+      args: ["-y", "mcp-remote", `https://${workerDomain}/mcp`],
+    } as McpRemoteEntry,
   };
 
   let config: { mcpServers?: Record<string, McpRemoteEntry> } & Record<string, unknown> = {};
@@ -365,14 +362,18 @@ async function mergeClaudeDesktopConfig(workerDomain: string): Promise<boolean> 
 
   const existingServers = config.mcpServers ?? {};
   const otherServers = Object.keys(existingServers).filter(
-    (k) => k !== "oura-sleep" && k !== "oura-activity",
+    (k) => k !== "oura" && k !== "oura-sleep" && k !== "oura-activity",
   );
   if (otherServers.length > 0) {
     console.log(`  Preserving ${otherServers.length} other MCP server(s): ${c.dim(otherServers.join(", "))}`);
   }
-  if (existingServers["oura-sleep"] || existingServers["oura-activity"]) {
-    console.log(`  ${c.dim("Existing oura-sleep / oura-activity entries will be updated.")}`);
+  if (existingServers["oura"] || existingServers["oura-sleep"] || existingServers["oura-activity"]) {
+    console.log(`  ${c.dim("Existing oura entries will be replaced with the consolidated endpoint.")}`);
   }
+
+  // Remove old split entries if present — consolidated endpoint replaces them.
+  delete existingServers["oura-sleep"];
+  delete existingServers["oura-activity"];
 
   config.mcpServers = { ...existingServers, ...newEntries };
 
@@ -388,16 +389,12 @@ async function mergeClaudeDesktopConfig(workerDomain: string): Promise<boolean> 
 
 function printManualSnippet(workerDomain: string): void {
   console.log(`
-  Add these two entries under "mcpServers" in:
+  Add this entry under "mcpServers" in:
     ${c.cyan(CLAUDE_CFG_PATH)}
 
-    "oura-sleep": {
+    "oura": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "https://${workerDomain}/mcp/sleep"]
-    },
-    "oura-activity": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "https://${workerDomain}/mcp/activity"]
+      "args": ["-y", "mcp-remote", "https://${workerDomain}/mcp"]
     }
 `);
 }

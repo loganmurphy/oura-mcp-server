@@ -53,11 +53,11 @@ There is no build step. Wrangler bundles `src/index.ts` directly via esbuild on 
 ### Request flow
 
 ```
-POST /mcp/sleep or /mcp/activity  (with Bearer token)
+POST /mcp  (with Bearer token)
   → OAuthProvider.fetch()         verify token in OAUTH_KV
-      → McpApiHandler.fetch()     route /mcp/sleep or /mcp/activity
+      → McpApiHandler.fetch()     single /mcp route
           → handleMcp()           parse JSON-RPC, route by method
-              → tools/list        return SLEEP_TOOLS or ACTIVITY_TOOLS from tools.ts
+              → tools/list        return OURA_TOOLS (all 7) from tools.ts
               → tools/call        dispatch to handleDateRangeTool() for all tools
                   handleDateRangeTool()    per-day D1 cache, returns plain JSON
 
@@ -106,13 +106,11 @@ Multi-session days (e.g. nap + main sleep in `sleep_sessions`) are stored as an 
 
 Neither path writes to the cache.
 
-### Tool split
+### Tools
 
-Claude Desktop enforces a per-MCP-server tool cap (~5). Tools are split into two endpoints served by the same Worker:
-- `/mcp/sleep` → `SLEEP_TOOLS` (daily_sleep, sleep_sessions, daily_readiness, daily_spo2)
-- `/mcp/activity` → `ACTIVITY_TOOLS` (daily_activity, workouts, daily_stress)
+All 7 tools are served from a single `/mcp` endpoint via `OURA_TOOLS` in `tools.ts` (a combined export of `SLEEP_TOOLS` + `ACTIVITY_TOOLS`). `McpApiHandler` calls `handleMcp` with `OURA_TOOLS` directly.
 
-Adding a new tool means: add the Oura fetch function in `oura.ts`, add the `ToolDef` to the appropriate array in `tools.ts`, add a `case` in `fetchFromOura()` in `index.ts`, and add the tool name to `DATE_KEYED_TOOLS` if it returns per-day items.
+Adding a new tool: add the Oura fetch function in `oura.ts`, add the `ToolDef` to `SLEEP_TOOLS` or `ACTIVITY_TOOLS` in `tools.ts`, add a `case` in `fetchFromOura()` in `index.ts`, and add the tool name to `DATE_KEYED_TOOLS` if it returns per-day items.
 
 ### Oura API
 

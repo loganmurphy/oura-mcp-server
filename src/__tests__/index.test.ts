@@ -25,7 +25,7 @@ import * as oura from "../oura";
 // Worker is the default export; handleMcp is exported for direct unit testing
 // (bypassing the OAuth wrapper which requires a real OAUTH_KV + valid Bearer token).
 import worker, { handleMcp } from "../index";
-import { SLEEP_TOOLS, ACTIVITY_TOOLS } from "../tools";
+import { OURA_TOOLS } from "../tools";
 import type { Env } from "../index";
 import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 
@@ -56,9 +56,6 @@ function jsonRpc(method: string, params?: Record<string, unknown>, id: number = 
 // post() calls handleMcp directly, bypassing the OAuthProvider wrapper.
 // This keeps MCP logic tests clean and independent of the OAuth layer.
 function post(path: string, body: string, env = makeEnv(), ctx = makeCtx()) {
-  const isActivity = path.includes("/mcp/activity");
-  const tools      = isActivity ? ACTIVITY_TOOLS : SLEEP_TOOLS;
-  const serverName = isActivity ? "oura-activity-wellness" : "oura-sleep-recovery";
   return handleMcp(
     new Request(`http://localhost${path}`, {
       method: "POST",
@@ -67,8 +64,8 @@ function post(path: string, body: string, env = makeEnv(), ctx = makeCtx()) {
     }),
     env,
     ctx,
-    tools,
-    serverName,
+    OURA_TOOLS,
+    "oura-mcp-server",
   );
 }
 
@@ -113,11 +110,11 @@ beforeEach(() => {
 // OAUTH_KV is never touched for OPTIONS, /health, /, or /unknown requests.
 
 describe("routing", () => {
-  it("OPTIONS /mcp/sleep returns 204 with CORS headers (OAuthProvider handles)", async () => {
+  it("OPTIONS /mcp returns 204 with CORS headers (OAuthProvider handles)", async () => {
     // OAuthProvider echoes the request Origin back (not "*") and only adds
     // CORS headers when the Origin header is present.
     const res = await worker.fetch(
-      new Request("http://localhost/mcp/sleep", {
+      new Request("http://localhost/mcp", {
         method: "OPTIONS",
         headers: { Origin: "http://localhost:3000" },
       }),
@@ -156,11 +153,11 @@ describe("routing", () => {
     expect(res.status).toBe(404);
   });
 
-  it("unauthenticated request to /mcp/sleep returns 401", async () => {
-    // OAuthProvider intercepts /mcp/* without a Bearer token and returns 401
+  it("unauthenticated request to /mcp returns 401", async () => {
+    // OAuthProvider intercepts /mcp without a Bearer token and returns 401
     // before the request ever reaches McpApiHandler.
     const res = await worker.fetch(
-      new Request("http://localhost/mcp/sleep", { method: "POST" }),
+      new Request("http://localhost/mcp", { method: "POST" }),
       makeEnv(),
       makeCtx(),
     );
@@ -172,7 +169,7 @@ describe("routing", () => {
 
 describe("missing OURA_API_TOKEN", () => {
   it("returns 500 with actionable error", async () => {
-    const res = await post("/mcp/sleep", jsonRpc("tools/list"), makeEnv(""));
+    const res = await post("/mcp", jsonRpc("tools/list"), makeEnv(""));
     expect(res.status).toBe(500);
     const body = await res.json() as { error: { message: string } };
     expect(body.error.message).toContain("OURA_API_TOKEN");
@@ -183,36 +180,30 @@ describe("missing OURA_API_TOKEN", () => {
 
 describe("initialize", () => {
   it("returns protocol version and capabilities", async () => {
-    const res = await post("/mcp/sleep", jsonRpc("initialize"));
+    const res = await post("/mcp", jsonRpc("initialize"));
     const body = await res.json() as { result: { protocolVersion: string } };
     expect(body.result.protocolVersion).toBe("2024-11-05");
   });
 });
 
 describe("tools/list", () => {
-  it("returns SLEEP_TOOLS for /mcp/sleep", async () => {
-    const res = await post("/mcp/sleep", jsonRpc("tools/list"));
+  it("returns all 7 OURA_TOOLS on /mcp", async () => {
+    const res = await post("/mcp", jsonRpc("tools/list"));
     const body = await res.json() as { result: { tools: Array<{ name: string }> } };
     const names = body.result.tools.map((t) => t.name);
     expect(names).toContain("oura_daily_sleep");
-    expect(names).not.toContain("oura_daily_activity");
+    expect(names).toContain("oura_daily_activity");
+    expect(names).toContain("oura_workouts");
+    expect(names).toContain("oura_daily_stress");
     expect(names).not.toContain("oura_personal_info");
     expect(names).not.toContain("oura_heart_rate");
-  });
-
-  it("returns ACTIVITY_TOOLS for /mcp/activity", async () => {
-    const res = await post("/mcp/activity", jsonRpc("tools/list"));
-    const body = await res.json() as { result: { tools: Array<{ name: string }> } };
-    const names = body.result.tools.map((t) => t.name);
-    expect(names).toContain("oura_daily_activity");
-    expect(names).not.toContain("oura_daily_sleep");
-    expect(names).not.toContain("oura_heart_rate");
+    expect(body.result.tools).toHaveLength(7);
   });
 });
 
 describe("ping", () => {
   it("returns an empty result", async () => {
-    const res = await post("/mcp/sleep", jsonRpc("ping"));
+    const res = await post("/mcp", jsonRpc("ping"));
     const body = await res.json() as { result: unknown };
     expect(body.result).toEqual({});
   });
@@ -221,14 +212,14 @@ describe("ping", () => {
 describe("notifications", () => {
   it("returns 202 for notification methods (no id)", async () => {
     const body = JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" });
-    const res = await post("/mcp/sleep", body);
+    const res = await post("/mcp", body);
     expect(res.status).toBe(202);
   });
 });
 
 describe("unknown method", () => {
   it("returns error code -32601", async () => {
-    const res = await post("/mcp/sleep", jsonRpc("nonexistent/method"));
+    const res = await post("/mcp", jsonRpc("nonexistent/method"));
     const body = await res.json() as { error: { code: number } };
     expect(body.error.code).toBe(-32601);
   });
@@ -236,7 +227,7 @@ describe("unknown method", () => {
 
 describe("malformed JSON", () => {
   it("returns error code -32700", async () => {
-    const res = await post("/mcp/sleep", "not json");
+    const res = await post("/mcp", "not json");
     const body = await res.json() as { error: { code: number } };
     expect(body.error.code).toBe(-32700);
   });
@@ -247,7 +238,7 @@ describe("malformed JSON", () => {
 describe("tools/call — date-range tool (oura_daily_sleep)", () => {
   it("returns _cache: hit on full cache hit", async () => {
     vi.mocked(cache.getCachedRange).mockResolvedValueOnce(CACHE_HIT);
-    const res = await post("/mcp/sleep", jsonRpc("tools/call", { name: "oura_daily_sleep", arguments: {} }));
+    const res = await post("/mcp", jsonRpc("tools/call", { name: "oura_daily_sleep", arguments: {} }));
     const data = await parseResult(res);
     expect(data._cache).toBe("hit");
     expect(oura.getDailySleep).not.toHaveBeenCalled();
@@ -259,7 +250,7 @@ describe("tools/call — date-range tool (oura_daily_sleep)", () => {
       data: [{ day: "2026-04-15", score: 80 }],
     });
     const ctx = makeCtx();
-    const res = await post("/mcp/sleep", jsonRpc("tools/call", { name: "oura_daily_sleep", arguments: {} }), makeEnv(), ctx);
+    const res = await post("/mcp", jsonRpc("tools/call", { name: "oura_daily_sleep", arguments: {} }), makeEnv(), ctx);
     const data = await parseResult(res);
     expect(data._cache).toBe("miss");
     expect(data.data).toHaveLength(1);
@@ -270,13 +261,13 @@ describe("tools/call — date-range tool (oura_daily_sleep)", () => {
     vi.mocked(cache.getCachedRange).mockResolvedValueOnce(CACHE_MISS);
     vi.mocked(oura.getDailySleep).mockResolvedValueOnce({ data: [] });
     const ctx = makeCtx();
-    await post("/mcp/sleep", jsonRpc("tools/call", { name: "oura_daily_sleep", arguments: {} }), makeEnv(), ctx);
+    await post("/mcp", jsonRpc("tools/call", { name: "oura_daily_sleep", arguments: {} }), makeEnv(), ctx);
     expect(ctx.waitUntil).not.toHaveBeenCalled();
   });
 
   it("bypasses cache on skip_cache: true", async () => {
     vi.mocked(oura.getDailySleep).mockResolvedValueOnce({ data: [] });
-    await post("/mcp/sleep", jsonRpc("tools/call", { name: "oura_daily_sleep", arguments: { skip_cache: true } }));
+    await post("/mcp", jsonRpc("tools/call", { name: "oura_daily_sleep", arguments: { skip_cache: true } }));
     expect(cache.getCachedRange).not.toHaveBeenCalled();
   });
 });
@@ -289,12 +280,12 @@ describe("tools/call — forceSkipCache flag", () => {
     const env = makeEnv();
     const ctx = makeCtx();
     await handleMcp(
-      new Request("http://localhost/mcp/sleep", {
+      new Request("http://localhost/mcp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: jsonRpc("tools/call", { name: "oura_daily_sleep", arguments: {} }),
       }),
-      env, ctx, SLEEP_TOOLS, "oura-sleep-recovery",
+      env, ctx, OURA_TOOLS, "oura-mcp-server",
       true, // forceSkipCache
     );
     expect(cache.getCachedRange).not.toHaveBeenCalled();
@@ -305,19 +296,19 @@ describe("tools/call — forceSkipCache flag", () => {
 
 describe("tools/call — all other date-range tools route through fetchFromOura", () => {
   const dateRangeTools = [
-    { tool: "oura_sleep_sessions",   endpoint: "/mcp/sleep",    mock: "getSleepSessions" },
-    { tool: "oura_daily_readiness",  endpoint: "/mcp/sleep",    mock: "getDailyReadiness" },
-    { tool: "oura_daily_activity",   endpoint: "/mcp/activity", mock: "getDailyActivity" },
-    { tool: "oura_daily_spo2",       endpoint: "/mcp/sleep",    mock: "getDailySpo2" },
-    { tool: "oura_workouts",         endpoint: "/mcp/activity", mock: "getWorkouts" },
-    { tool: "oura_daily_stress",     endpoint: "/mcp/activity", mock: "getDailyStress" },
+    { tool: "oura_sleep_sessions",  mock: "getSleepSessions" },
+    { tool: "oura_daily_readiness", mock: "getDailyReadiness" },
+    { tool: "oura_daily_activity",  mock: "getDailyActivity" },
+    { tool: "oura_daily_spo2",      mock: "getDailySpo2" },
+    { tool: "oura_workouts",        mock: "getWorkouts" },
+    { tool: "oura_daily_stress",    mock: "getDailyStress" },
   ] as const;
 
-  for (const { tool, endpoint, mock } of dateRangeTools) {
+  for (const { tool, mock } of dateRangeTools) {
     it(`${tool} returns 200 and calls oura.${mock}`, async () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       vi.mocked(oura[mock]).mockResolvedValueOnce({ data: [] } as any);
-      const res = await post(endpoint, jsonRpc("tools/call", { name: tool, arguments: {} }));
+      const res = await post("/mcp", jsonRpc("tools/call", { name: tool, arguments: {} }));
       expect(res.status).toBe(200);
       expect(oura[mock]).toHaveBeenCalled();
     });
@@ -334,28 +325,28 @@ describe("tools/call — all other date-range tools route through fetchFromOura"
 describe("tools/call — exclusiveEnd behavior", () => {
   it("passes end_date unchanged to getDailySleep (inclusive endpoint)", async () => {
     vi.mocked(oura.getDailySleep).mockResolvedValueOnce({ data: [] });
-    await post("/mcp/sleep", jsonRpc("tools/call", { name: "oura_daily_sleep", arguments: {} }));
+    await post("/mcp", jsonRpc("tools/call", { name: "oura_daily_sleep", arguments: {} }));
     // missEnd = "2026-04-17" from CACHE_MISS mock — passed through as-is for daily_sleep
     expect(oura.getDailySleep).toHaveBeenCalledWith("test-token", "2026-04-15", "2026-04-17");
   });
 
   it("adds +1 day to end_date for oura_sleep_sessions (exclusive endpoint)", async () => {
     vi.mocked(oura.getSleepSessions).mockResolvedValueOnce({ data: [], next_token: null });
-    await post("/mcp/sleep", jsonRpc("tools/call", { name: "oura_sleep_sessions", arguments: {} }));
+    await post("/mcp", jsonRpc("tools/call", { name: "oura_sleep_sessions", arguments: {} }));
     // missEnd = "2026-04-17" → exclusiveEnd adds 1 day → "2026-04-18"
     expect(oura.getSleepSessions).toHaveBeenCalledWith("test-token", "2026-04-15", "2026-04-18");
   });
 
   it("adds +1 day to end_date for oura_daily_activity (exclusive endpoint)", async () => {
     vi.mocked(oura.getDailyActivity).mockResolvedValueOnce({ data: [], next_token: null });
-    await post("/mcp/activity", jsonRpc("tools/call", { name: "oura_daily_activity", arguments: {} }));
+    await post("/mcp", jsonRpc("tools/call", { name: "oura_daily_activity", arguments: {} }));
     // missEnd = "2026-04-17" → exclusiveEnd adds 1 day → "2026-04-18"
     expect(oura.getDailyActivity).toHaveBeenCalledWith("test-token", "2026-04-15", "2026-04-18");
   });
 
   it("adds +1 day to end_date for oura_workouts (exclusive endpoint)", async () => {
     vi.mocked(oura.getWorkouts).mockResolvedValueOnce({ data: [] });
-    await post("/mcp/activity", jsonRpc("tools/call", { name: "oura_workouts", arguments: {} }));
+    await post("/mcp", jsonRpc("tools/call", { name: "oura_workouts", arguments: {} }));
     // missEnd = "2026-04-17" → exclusiveEnd adds 1 day → "2026-04-18"
     expect(oura.getWorkouts).toHaveBeenCalledWith("test-token", "2026-04-15", "2026-04-18");
   });
@@ -375,7 +366,7 @@ describe("tools/call — groupByDay merges multiple items per day", () => {
       next_token: null,
     });
     const res = await post(
-      "/mcp/sleep",
+      "/mcp",
       jsonRpc("tools/call", { name: "oura_sleep_sessions", arguments: {} }),
     );
     const data = await parseResult(res);
@@ -387,7 +378,7 @@ describe("tools/call — groupByDay merges multiple items per day", () => {
 
 describe("tools/call — unknown tool", () => {
   it("returns isError: true", async () => {
-    const res = await post("/mcp/sleep", jsonRpc("tools/call", { name: "oura_nonexistent", arguments: {} }));
+    const res = await post("/mcp", jsonRpc("tools/call", { name: "oura_nonexistent", arguments: {} }));
     const body = await res.json() as { result: { isError: boolean } };
     expect(body.result.isError).toBe(true);
   });
@@ -395,7 +386,7 @@ describe("tools/call — unknown tool", () => {
 
 describe("tools/call — missing tool name", () => {
   it("returns 400", async () => {
-    const res = await post("/mcp/sleep", jsonRpc("tools/call", { arguments: {} }));
+    const res = await post("/mcp", jsonRpc("tools/call", { arguments: {} }));
     expect(res.status).toBe(400);
   });
 });
@@ -404,7 +395,7 @@ describe("tools/call — Oura API error", () => {
   it("surfaces the error message in the response", async () => {
     vi.mocked(cache.getCachedRange).mockResolvedValueOnce(CACHE_MISS);
     vi.mocked(oura.getDailySleep).mockRejectedValueOnce(new Error("Oura API error 500: timeout"));
-    const res = await post("/mcp/sleep", jsonRpc("tools/call", { name: "oura_daily_sleep", arguments: {} }));
+    const res = await post("/mcp", jsonRpc("tools/call", { name: "oura_daily_sleep", arguments: {} }));
     const body = await res.json() as { result: { isError: boolean; content: Array<{ text: string }> } };
     expect(body.result.isError).toBe(true);
     expect(body.result.content[0]!.text).toContain("Oura API error 500");

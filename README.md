@@ -23,12 +23,7 @@ Cloudflare Worker  (OAuth 2.1 via @cloudflare/workers-oauth-provider)
 
 Access is protected by a password you set during bootstrap. `mcp-remote` handles the OAuth flow automatically — it opens a browser login page on first connection, then caches the access token for 30 days before re-auth is needed.
 
-Tools are split across two MCP server endpoints to stay within Claude Desktop's per-server tool limit:
-
-| Endpoint | Tools |
-|---|---|
-| `/mcp/sleep` | `daily_sleep`, `sleep_sessions`, `daily_readiness`, `daily_spo2` |
-| `/mcp/activity` | `daily_activity`, `workouts`, `daily_stress` |
+All 7 tools are served from a single `/mcp` endpoint — one connection, one OAuth login.
 
 On a partial cache hit the worker fetches only the missing date range from Oura and merges it with the cached portion before responding. Empty responses (data not yet synced from the ring) are never cached. Pass `skip_cache: true` on any tool call to bypass the cache entirely.
 
@@ -105,12 +100,12 @@ pnpm dev
 curl -s http://localhost:8787/.well-known/oauth-authorization-server | jq .
 
 # Unauthenticated call returns 401 — this is expected
-curl -s -X POST http://localhost:8787/mcp/sleep \
+curl -s -X POST http://localhost:8787/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq .
 
 # Use mcp-remote to go through the full OAuth flow and call a tool:
-npx mcp-remote http://localhost:8787/mcp/sleep
+npx mcp-remote http://localhost:8787/mcp
 ```
 
 ## Deploy to Cloudflare
@@ -147,19 +142,15 @@ Add both MCP servers to `~/Library/Application Support/Claude/claude_desktop_con
 ```json
 {
   "mcpServers": {
-    "oura-sleep": {
+    "oura": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "https://oura-mcp-server.<your-subdomain>.workers.dev/mcp/sleep"]
-    },
-    "oura-activity": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "https://oura-mcp-server.<your-subdomain>.workers.dev/mcp/activity"]
+      "args": ["-y", "mcp-remote", "https://oura-mcp-server.<your-subdomain>.workers.dev/mcp"]
     }
   }
 }
 ```
 
-For local dev, use `http://localhost:8787/mcp/sleep` etc. and keep `pnpm dev` running.
+For local dev, use `http://localhost:8787/mcp` and keep `pnpm dev` running.
 
 Restart Claude Desktop after any config change. On first connection, a browser window will open for the password prompt.
 
@@ -204,9 +195,8 @@ All `end_date` values are **inclusive** from the caller's perspective across all
 - `mcp-remote` requires Node.js — confirm with `node --version` (needs 22 LTS; use [Volta](https://volta.sh) to match the pinned version)
 - Try clearing the mcp-remote cache: `rm -rf ~/.mcp-remote`
 
-**Not seeing all 7 tools (4 sleep + 3 activity)**
-- Claude Desktop has a per-server tool cap, so tools are intentionally split across two servers (`oura-sleep` and `oura-activity`)
-- Confirm both entries exist in `claude_desktop_config.json` and restart Claude Desktop
+**Not seeing all 7 tools**
+- Confirm the `oura` entry exists in `claude_desktop_config.json` pointing to `/mcp` and restart Claude Desktop
 
 **Port 8787 already in use**
 ```bash
@@ -244,7 +234,7 @@ pnpm dev
 
 ```
 src/
-  index.ts          Worker entry — OAuthProvider wrapper, MCP routing, tool dispatch
+  index.ts          Worker entry — OAuthProvider wrapper, single /mcp endpoint, tool dispatch
   cache.ts          D1 cache layer (per-day TTL, partial hit merging)
   oura.ts           Oura API client
   tools.ts          MCP tool definitions (SLEEP_TOOLS / ACTIVITY_TOOLS)
