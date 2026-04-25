@@ -1,10 +1,9 @@
 // Per-day rows let us serve partial cache hits and fetch only the missing dates.
 
-const TTL: Record<"today" | "yesterday" | "older" | "singleton", number> = {
+const TTL: Record<"today" | "yesterday" | "older", number> = {
   today:     1  * 60 * 60 * 1000,  // 1h  — data still accumulating
   yesterday: 6  * 60 * 60 * 1000,  // 6h  — Oura may retroactively adjust
   older:     24 * 60 * 60 * 1000,  // 24h — stable historical data
-  singleton: 24 * 60 * 60 * 1000,  // 24h — personal_info
 };
 
 function ttlFor(dateKey: string): number {
@@ -63,27 +62,6 @@ export async function setCachedRange(
       .bind(metric, dateKey, JSON.stringify(data), now),
   );
   await db.batch(stmts);
-}
-
-// personal_info has no date dimension — stored under a fixed key.
-const SINGLETON_KEY = "__singleton__";
-
-export async function getCachedSingleton(db: D1Database, metric: string): Promise<unknown | null> {
-  const row = await db
-    .prepare("SELECT data, fetched_at FROM oura_cache WHERE metric = ? AND date_key = ?")
-    .bind(metric, SINGLETON_KEY)
-    .first<{ data: string; fetched_at: number }>();
-
-  if (!row || Date.now() - row.fetched_at > TTL.singleton) return null;
-  return JSON.parse(row.data);
-}
-
-export async function setCachedSingleton(db: D1Database, metric: string, data: unknown): Promise<void> {
-  const now = Date.now();
-  await db
-    .prepare("INSERT OR REPLACE INTO oura_cache (metric, date_key, data, fetched_at) VALUES (?, ?, ?, ?)")
-    .bind(metric, SINGLETON_KEY, JSON.stringify(data), now)
-    .run();
 }
 
 /** Returns every date string (YYYY-MM-DD) in [start, end] inclusive. */

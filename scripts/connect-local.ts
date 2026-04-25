@@ -91,6 +91,13 @@ async function main() {
     }
   }
 
+  // ── Step 2b: Regenerate Worker types ────────────────────────────────────────
+
+  info("Regenerating Worker types...");
+  const typegen = spawnSync("npx", ["wrangler", "types"], { stdio: ["ignore", "inherit", "inherit"] });
+  if (typegen.status !== 0) warn("Type generation failed — run `pnpm cf-typegen` manually");
+  else ok("worker-configuration.d.ts updated");
+
   // ── Step 3: Local D1 schema ──────────────────────────────────────────────────
 
   info("Applying schema to local D1...");

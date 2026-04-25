@@ -2,7 +2,7 @@
   "name": "oura-mcp-server",
   "main": "src/index.ts",
   "compatibility_date": "2025-04-01",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
 
   // Disable preview URLs — keeps only the production workers.dev URL active.
   "preview_urls": false,

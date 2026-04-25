@@ -463,6 +463,16 @@ async function main(): Promise<void> {
   const dbId        = await ensureD1(client, account.id);
   const kvId        = await ensureKvNamespace(client, account.id);
   writeWranglerConfig(dbId, kvId);
+
+  step(6.5, "Regenerate Worker types");
+  info("Running `wrangler types`...");
+  const typegen = spawnSync("npx", ["wrangler", "types"], {
+    stdio: ["ignore", "inherit", "inherit"],
+    env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: account.id },
+  });
+  if (typegen.status !== 0) warn("Type generation failed — run `pnpm cf-typegen` manually");
+  else ok("worker-configuration.d.ts updated");
+
   applyD1Schema(account.id);
   const ouraToken   = await ensureOuraToken();
   const mcpPassword = await promptMcpPassword();
