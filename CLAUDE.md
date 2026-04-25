@@ -31,21 +31,20 @@ npx wrangler d1 execute oura-cache --remote --file=./migrations/001_init.sql  # 
 cp wrangler.example.jsonc wrangler.jsonc
 ```
 
-Local secrets live in `.dev.vars` (gitignored). `pnpm bootstrap` manages this file:
+Local secrets live in `.dev.vars` (gitignored). `pnpm bootstrap` manages this file — you should rarely need to touch it by hand:
 
 ```
 OURA_API_TOKEN=...                # Oura PAT (user-provided)
 MCP_AUTH_PASSWORD=...             # Password for the OAuth login page
-CLOUDFLARE_API_TOKEN=...          # Scoped API token — drives both SDK calls and `wrangler deploy`
 CLOUDFLARE_ACCOUNT_ID=...         # Selected during bootstrap, remembered across runs
 WORKER_SUBDOMAIN=...              # Your *.workers.dev subdomain
 ```
 
 ### `scripts/bootstrap.ts` — auth model
 
-One manually-created Cloudflare API token drives everything — the SDK client and the wrangler CLI (via `CLOUDFLARE_API_TOKEN` in env). The user creates it once in the dashboard with the scope list in `REQUIRED_SCOPES` (Account Settings Read, Workers Scripts Edit, Workers KV Storage Edit, D1 Edit, User Details Read) and pastes it; it's cached in `.dev.vars` and verified on every run.
+Bootstrap authenticates to Cloudflare via `wrangler login` — a standard browser OAuth flow that caches a token at `~/.wrangler/config/default.toml`. The script reads that token to also drive the Cloudflare SDK (for listing/creating resources that wrangler's CLI doesn't expose directly). `CLOUDFLARE_API_TOKEN` in the environment is accepted as a fallback for CI or users who prefer a manually-created token.
 
-The entire bootstrap is fully API-automatable (no dashboard wizard steps). Resources are idempotent — D1 database and KV namespace are detected and reused on re-runs.
+Only two manual inputs: an Oura Personal Access Token and a password for the MCP server's login page. All Cloudflare resources (D1 database, KV namespace, Worker deploy, secrets) are fully automated and idempotent — re-running detects and reuses existing resources.
 
 ## Architecture
 

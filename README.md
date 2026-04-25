@@ -47,18 +47,16 @@ pnpm bootstrap
 
 An interactive wizard handles the full setup end-to-end. It will:
 
-1. Prompt you for a Cloudflare API token (opens the dashboard and walks through the required permissions)
+1. Sign in to Cloudflare via `wrangler login` (opens a browser — free account sign-up works)
 2. Pick an account and confirm your `workers.dev` subdomain
-3. Create a D1 database (`oura-cache`) and a KV namespace (`oura-oauth`)
-4. Show a **plan preview** listing every resource that will be created or reused, and wait for your `y` before touching anything
+3. Show a **plan preview** listing every resource that will be created or reused, and wait for your `y` before touching anything
+4. Create a D1 database (`oura-cache`) and a KV namespace (`oura-oauth`)
 5. Prompt for your Oura Personal Access Token (or open the token page if you don't have one)
 6. Prompt you to choose an MCP server password
 7. Deploy the Worker and set `OURA_API_TOKEN` + `MCP_AUTH_PASSWORD` as secrets
 8. Write the two `oura-sleep` / `oura-activity` entries into your Claude Desktop config (preserving any other MCP servers you have)
 
-Re-running is safe — every step detects existing resources and reuses them.
-
-One manual step: Cloudflare API tokens can't be minted programmatically without an existing token, so the wizard opens the token page and asks you to paste one in, once. The required scopes are listed in the prompt. It's cached in `.dev.vars` and drives both the SDK calls and the `wrangler deploy` step.
+Re-running is safe — every step detects existing resources and reuses them. The only manual inputs are your Oura PAT and your chosen password.
 
 When it finishes, fully quit Claude Desktop (Cmd+Q) and relaunch — then ask *"What was my sleep score last night?"*
 
@@ -228,9 +226,9 @@ pnpm dev
 - Rotate the production secret: `npx wrangler secret put OURA_API_TOKEN` (no redeploy needed — it picks up on the next request)
 - For local dev: update `OURA_API_TOKEN=` in `.dev.vars` and restart `pnpm dev`
 
-**`pnpm bootstrap` fails with "Saved API token isn't working"**
-- The Cloudflare API token you pasted earlier has expired or been revoked — the wizard automatically removes it from `.dev.vars` and prompts for a new one on the same run, so just follow the prompt
-- **Recommendation:** when you create the replacement, set a **6-12 month TTL** in the Cloudflare token creation UI (`TTL` section). A non-expiring token that leaks is a forever problem
+**`pnpm bootstrap` fails at the Cloudflare login step**
+- Run `npx wrangler login` manually to re-authenticate — the wizard will pick up the cached token on the next run
+- If you need to use a specific API token instead of browser login, set `CLOUDFLARE_API_TOKEN` in your environment before running bootstrap
 
 **Re-authenticating / rotating the MCP password**
 - To change the password: run `npx wrangler secret put MCP_AUTH_PASSWORD`, then clear the mcp-remote token cache (`rm -rf ~/.mcp-remote`) and relaunch Claude Desktop
