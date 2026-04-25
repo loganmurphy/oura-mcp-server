@@ -26,29 +26,42 @@ const SCHEMA_PATH           = path.resolve(process.cwd(), "migrations/001_init.s
 // ── Cloudflare auth via wrangler OAuth ────────────────────────────────────────
 //
 // `wrangler login` runs a standard CF OAuth browser flow and caches the
-// resulting token at ~/.wrangler/config/default.toml. We read it from
+// resulting token in a platform-specific config file. We read it from
 // there so we can also drive the CF SDK (for resource listing/creation),
 // which wrangler's CLI doesn't expose for every operation we need.
 //
 // Priority: CLOUDFLARE_API_TOKEN env var → wrangler config file.
 // The env var fallback keeps CI and manual-token users working unchanged.
+//
+// Config file locations (wrangler checks these in order):
+//   macOS wrangler 4+  ~/Library/Preferences/.wrangler/config/default.toml
+//   Linux / wrangler 3 ~/.wrangler/config/default.toml
+//   XDG fallback       ~/.config/.wrangler/config/default.toml
 
 function extractWranglerToken(): string | undefined {
   if (process.env.CLOUDFLARE_API_TOKEN) return process.env.CLOUDFLARE_API_TOKEN;
 
-  const configPath = path.join(os.homedir(), ".wrangler", "config", "default.toml");
-  if (!fs.existsSync(configPath)) return undefined;
-  try {
-    const toml = fs.readFileSync(configPath, "utf8");
-    // `wrangler login`      → writes oauth_token
-    // `wrangler login --api-key` → writes api_token
-    return (
-      toml.match(/^oauth_token\s*=\s*"([^"]+)"/m)?.[1] ??
-      toml.match(/^api_token\s*=\s*"([^"]+)"/m)?.[1]
-    );
-  } catch {
-    return undefined;
+  const candidates = [
+    path.join(os.homedir(), "Library", "Preferences", ".wrangler", "config", "default.toml"),
+    path.join(os.homedir(), ".wrangler", "config", "default.toml"),
+    path.join(os.homedir(), ".config", ".wrangler", "config", "default.toml"),
+  ];
+
+  for (const configPath of candidates) {
+    if (!fs.existsSync(configPath)) continue;
+    try {
+      const toml = fs.readFileSync(configPath, "utf8");
+      // `wrangler login`           → writes oauth_token
+      // `wrangler login --api-key` → writes api_token
+      const token =
+        toml.match(/^oauth_token\s*=\s*"([^"]+)"/m)?.[1] ??
+        toml.match(/^api_token\s*=\s*"([^"]+)"/m)?.[1];
+      if (token) return token;
+    } catch {
+      continue;
+    }
   }
+  return undefined;
 }
 
 async function ensureWranglerAuth(): Promise<{ client: Cloudflare }> {
