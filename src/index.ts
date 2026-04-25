@@ -389,9 +389,12 @@ const defaultHandler = {
       if (request.method === "POST") {
         // Rate-limit by IP — 10 attempts / 60 s (configured in wrangler.jsonc).
         // CF-Connecting-IP is injected by the CF edge; falls back to "global"
-        // in local dev where Miniflare simulates the limiter in-memory.
+        // in local dev. The binding may be undefined in older Miniflare versions
+        // that don't yet support the rate_limiting binding type — skip gracefully.
         const ip = request.headers.get("CF-Connecting-IP") ?? "global";
-        const { success } = await env.RATE_LIMITER.limit({ key: ip });
+        const { success } = env.RATE_LIMITER
+          ? await env.RATE_LIMITER.limit({ key: ip })
+          : { success: true };
         if (!success) {
           return new Response(renderLoginPage("", false, true), {
             status: 429,
