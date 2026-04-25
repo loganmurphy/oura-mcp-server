@@ -32,13 +32,18 @@ banner("Connect Claude Desktop → local dev server", [
   "No Cloudflare account needed — just keep `pnpm dev` running.",
 ]);
 
-// Warn if OURA_API_TOKEN isn't in .dev.vars yet
+// Warn if required secrets aren't in .dev.vars yet
 const vars = loadDevVars(DEV_VARS_PATH);
 if (!vars["OURA_API_TOKEN"]) {
   warn("OURA_API_TOKEN not found in .dev.vars");
   console.log(`  Add it before starting the dev server:`);
   console.log(`    ${c.cyan('echo "OURA_API_TOKEN=your_token_here" >> .dev.vars')}`);
   console.log(`  Get a token at: ${c.cyan("https://cloud.ouraring.com/personal-access-tokens")}\n`);
+}
+if (!vars["MCP_AUTH_PASSWORD"]) {
+  warn("MCP_AUTH_PASSWORD not found in .dev.vars");
+  console.log(`  Set a local password before starting the dev server:`);
+  console.log(`    ${c.cyan('echo "MCP_AUTH_PASSWORD=your_password" >> .dev.vars')}\n`);
 }
 
 // Read existing config

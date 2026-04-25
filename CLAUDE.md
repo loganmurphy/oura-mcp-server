@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 pnpm dev          # Start local dev server on http://localhost:8787 (Miniflare, hot reload)
 pnpm deploy       # Deploy to Cloudflare Workers (requires wrangler login)
 pnpm cf-typegen   # Regenerate worker-configuration.d.ts from wrangler.jsonc bindings
-pnpm bootstrap      # Interactive wizard — provisions D1, deploys Worker, sets up Zero Trust, wires Claude Desktop
+pnpm bootstrap      # Interactive wizard — provisions D1, KV, deploys Worker, wires Claude Desktop
 pnpm connect-local  # Wire Claude Desktop to the local dev server (localhost:8787) — no Cloudflare needed
 pnpm reset          # Clear .dev.vars + wrangler.jsonc (use before re-running bootstrap against a different CF account)
 pnpm lint           # oxlint (typescript/no-explicit-any + recommended rules, --deny-warnings)
@@ -26,31 +26,26 @@ npx wrangler d1 execute oura-cache --local --file=./migrations/001_init.sql   # 
 npx wrangler d1 execute oura-cache --remote --file=./migrations/001_init.sql  # production
 ```
 
-`wrangler.jsonc` is gitignored — copy from the template and fill in your D1 `database_id`:
+`wrangler.jsonc` is gitignored — copy from the template and fill in both IDs:
 ```bash
 cp wrangler.example.jsonc wrangler.jsonc
 ```
 
-Local secrets live in `.dev.vars` (gitignored). `pnpm bootstrap` manages this file — you should rarely need to touch it by hand:
+Local secrets live in `.dev.vars` (gitignored). `pnpm bootstrap` manages this file:
 
 ```
 OURA_API_TOKEN=...                # Oura PAT (user-provided)
+MCP_AUTH_PASSWORD=...             # Password for the OAuth login page
 CLOUDFLARE_API_TOKEN=...          # Scoped API token — drives both SDK calls and `wrangler deploy`
 CLOUDFLARE_ACCOUNT_ID=...         # Selected during bootstrap, remembered across runs
 WORKER_SUBDOMAIN=...              # Your *.workers.dev subdomain
-CF_ACCESS_CLIENT_ID=...           # Service token credentials — used by mcp-remote via
-CF_ACCESS_CLIENT_SECRET=...       #   the Claude Desktop config's `env` block
 ```
 
 ### `scripts/bootstrap.ts` — auth model
 
-One manually-created Cloudflare API token drives everything — the SDK client and the wrangler CLI (via `CLOUDFLARE_API_TOKEN` in env). The user creates it once in the dashboard with the scope list in `REQUIRED_SCOPES` (Account Settings Read, Workers Scripts Edit, D1 Edit, Access: Apps and Policies Edit, Access: Service Tokens Edit, User Details Read) and pastes it; it's cached in `.dev.vars` and verified on every run.
+One manually-created Cloudflare API token drives everything — the SDK client and the wrangler CLI (via `CLOUDFLARE_API_TOKEN` in env). The user creates it once in the dashboard with the scope list in `REQUIRED_SCOPES` (Account Settings Read, Workers Scripts Edit, Workers KV Storage Edit, D1 Edit, User Details Read) and pastes it; it's cached in `.dev.vars` and verified on every run.
 
-Zero Trust subscription enrollment (credit card + Free plan signup) can't be done via API — fresh accounts have to complete the signup in the dashboard. `ensureAccessEnabled` opens `dash.cloudflare.com/<account>/one/` and waits for the user to finish the wizard, retrying the probe up to 3 times. After the org exists, everything else (app, service token, policy) is programmatic.
-
-Why not OAuth? Wrangler's public OAuth client doesn't grant Access / Zero Trust scopes, and `POST /user/tokens` (the mint-a-scoped-token endpoint) also requires scopes the OAuth session doesn't have. One pasted token with the right scopes is simpler and covers both SDK and CLI needs.
-
-Idempotency: D1 database, Access app, service token (reused from saved creds if still present on Cloudflare), and policy are all detected and reused. The only delete the script performs is removing a superseded service token after rotation, once the new one is wired into the policy.
+The entire bootstrap is fully API-automatable (no dashboard wizard steps). Resources are idempotent — D1 database and KV namespace are detected and reused on re-runs.
 
 ## Architecture
 
@@ -59,12 +54,40 @@ There is no build step. Wrangler bundles `src/index.ts` directly via esbuild on 
 ### Request flow
 
 ```
-POST /mcp/sleep or /mcp/activity
-  → handleMcp()          parse JSON-RPC, route by method
-      → tools/list       return SLEEP_TOOLS or ACTIVITY_TOOLS from tools.ts
-      → tools/call       dispatch to handleDateRangeTool() for all tools
-          handleDateRangeTool()    per-day D1 cache, returns plain JSON
+POST /mcp/sleep or /mcp/activity  (with Bearer token)
+  → OAuthProvider.fetch()         verify token in OAUTH_KV
+      → McpApiHandler.fetch()     route /mcp/sleep or /mcp/activity
+          → handleMcp()           parse JSON-RPC, route by method
+              → tools/list        return SLEEP_TOOLS or ACTIVITY_TOOLS from tools.ts
+              → tools/call        dispatch to handleDateRangeTool() for all tools
+                  handleDateRangeTool()    per-day D1 cache, returns plain JSON
+
+GET /authorize  → defaultHandler  render password form (HTML)
+POST /authorize → defaultHandler  validate MCP_AUTH_PASSWORD, completeAuthorization() → redirect
+/oauth/token    → OAuthProvider   token exchange (handled internally)
+/oauth/register → OAuthProvider   dynamic client registration (handled internally)
 ```
+
+### OAuth layer (`src/index.ts`)
+
+`export default new OAuthProvider<Env>({...})` wraps the Worker. All `/mcp/*` requests require a valid Bearer token (stored in `OAUTH_KV`). Unauthenticated requests get 401 with a `WWW-Authenticate` header pointing to the discovery endpoint.
+
+The auth UI is a password form served at `GET /authorize`. On submit it calls `env.OAUTH_PROVIDER.completeAuthorization()` and redirects back to the client. `mcp-remote` handles the full OAuth PKCE flow automatically — the user just enters their password in the browser that opens.
+
+**Env bindings:**
+- `OAUTH_KV: KVNamespace` — required by `@cloudflare/workers-oauth-provider` (binding name is hardcoded in the library)
+- `MCP_AUTH_PASSWORD: string` — Worker secret; checked by the login form
+- `OAUTH_PROVIDER: OAuthHelpers` — injected by OAuthProvider at runtime into env before delegating to handlers
+
+**Token TTLs:** 30-day access tokens, refresh tokens never expire (single-user personal tool).
+
+**`handleMcp` is exported** as a named export so tests can call MCP logic directly without going through the OAuth wrapper.
+
+### Testing strategy
+
+`src/__tests__/index.test.ts` calls `handleMcp` directly (bypassing OAuth) for MCP logic tests. The routing tests that call `worker.fetch()` only exercise the `defaultHandler` routes (`/health`, `/`) and the OAuthProvider's 401 behavior on unauthenticated `/mcp/*` requests.
+
+`src/__tests__/mocks/cloudflare-workers.ts` provides a minimal `WorkerEntrypoint` stub — `cloudflare:workers` is not available in Node's ESM loader, so `vitest.config.ts` maps it to this stub (with `server.deps.inline` forcing `@cloudflare/workers-oauth-provider` through Vite's pipeline so the alias applies to its internal imports too).
 
 ### Cache strategy (`src/cache.ts`)
 

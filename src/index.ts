@@ -1,3 +1,5 @@
+import OAuthProvider, { type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
+import { WorkerEntrypoint } from "cloudflare:workers";
 import {
   getDailyActivity,
   getDailyReadiness,
@@ -19,6 +21,10 @@ import { ACTIVITY_TOOLS, SLEEP_TOOLS, type ToolDef } from "./tools";
 export interface Env {
   OURA_API_TOKEN: string;
   DB: D1Database;
+  OAUTH_KV: KVNamespace;
+  MCP_AUTH_PASSWORD: string;
+  // Injected by OAuthProvider at request time:
+  OAUTH_PROVIDER: OAuthHelpers;
 }
 
 interface JsonRpcRequest {
@@ -174,7 +180,7 @@ async function handleDateRangeTool(
   }));
 }
 
-async function handleMcp(
+export async function handleMcp(
   request: Request,
   env: Env,
   ctx: ExecutionContext,
@@ -238,35 +244,211 @@ async function handleMcp(
   }
 }
 
-export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+// ── MCP API handler (authenticated) ──────────────────────────────────────────
+//
+// OAuthProvider forwards /mcp/* requests here only after verifying a valid
+// Bearer token. `this.env` and `this.ctx` are the standard Worker bindings.
+
+class McpApiHandler extends WorkerEntrypoint<Env> {
+  async fetch(request: Request): Promise<Response> {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS });
     }
 
     const url = new URL(request.url);
-    const { pathname } = url;
     const noCache = url.searchParams.has("no_cache");
 
-    if (pathname === "/mcp/sleep") {
+    if (url.pathname === "/mcp/sleep") {
       if (request.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
-      return handleMcp(request, env, ctx, SLEEP_TOOLS, "oura-sleep-recovery", noCache);
+      return handleMcp(request, this.env, this.ctx, SLEEP_TOOLS, "oura-sleep-recovery", noCache);
     }
 
-    if (pathname === "/mcp/activity") {
+    if (url.pathname === "/mcp/activity") {
       if (request.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
-      return handleMcp(request, env, ctx, ACTIVITY_TOOLS, "oura-activity-wellness", noCache);
+      return handleMcp(request, this.env, this.ctx, ACTIVITY_TOOLS, "oura-activity-wellness", noCache);
     }
 
-    if (pathname === "/" || pathname === "/health") {
+    return new Response("Not found", { status: 404 });
+  }
+}
+
+// ── Auth UI helpers ───────────────────────────────────────────────────────────
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function renderLoginPage(oauthParams: string, failed: boolean): string {
+  const errorHtml = failed
+    ? `<p class="error">Incorrect password — please try again.</p>`
+    : "";
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Oura MCP — Sign In</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f5f5;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; margin: 0;
+    }
+    .card {
+      background: white; border-radius: 12px; padding: 2rem;
+      width: 100%; max-width: 360px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.08);
+    }
+    h1 { margin: 0 0 .4rem; font-size: 1.25rem; }
+    .subtitle { margin: 0 0 1.5rem; color: #666; font-size: .875rem; }
+    label { display: block; font-size: .875rem; font-weight: 500; margin-bottom: .4rem; }
+    input[type=password] {
+      width: 100%; padding: .6rem .8rem;
+      border: 1px solid #ddd; border-radius: 8px;
+      font-size: 1rem; margin-bottom: 1rem;
+      outline-offset: 2px;
+    }
+    input[type=password]:focus { border-color: #5865f2; outline: 2px solid #5865f222; }
+    button {
+      width: 100%; padding: .7rem;
+      background: #5865f2; color: white;
+      border: none; border-radius: 8px;
+      font-size: 1rem; font-weight: 600; cursor: pointer;
+    }
+    button:hover { background: #4752c4; }
+    .error {
+      color: #b91c1c; background: #fef2f2;
+      border: 1px solid #fecaca; border-radius: 6px;
+      padding: .6rem .8rem; margin-bottom: 1rem; font-size: .875rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>🔒 Oura MCP Server</h1>
+    <p class="subtitle">Enter your password to authorize access.</p>
+    ${errorHtml}
+    <form method="POST" action="/authorize">
+      <input type="hidden" name="oauth_params" value="${escapeHtml(oauthParams)}">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password"
+             autofocus autocomplete="current-password" placeholder="Enter password">
+      <button type="submit">Authorize</button>
+    </form>
+  </div>
+</body>
+</html>`;
+}
+
+// ── Default handler (auth UI + health) ───────────────────────────────────────
+//
+// Receives all requests that aren't matched by apiRoute (/mcp/*), including
+// the /authorize login page, OAuth metadata endpoints, and health checks.
+
+const defaultHandler = {
+  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS });
+    }
+
+    const url = new URL(request.url);
+
+    // ── OAuth authorization endpoint ─────────────────────────────────────────
+
+    if (url.pathname === "/authorize") {
+      if (request.method === "GET") {
+        let oauthReq;
+        try {
+          oauthReq = await env.OAUTH_PROVIDER.parseAuthRequest(request);
+        } catch {
+          return new Response("Invalid authorization request", { status: 400 });
+        }
+        // Embed the raw query string so POST can reconstruct the OAuth request
+        void oauthReq; // parsed only to validate; raw params carry the state
+        return new Response(renderLoginPage(url.search, false), {
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      }
+
+      if (request.method === "POST") {
+        let formData: FormData;
+        try {
+          formData = await request.formData();
+        } catch {
+          return new Response("Invalid form submission", { status: 400 });
+        }
+
+        const password    = formData.get("password") as string | null;
+        const rawParams   = formData.get("oauth_params") as string | null;
+
+        if (!rawParams) {
+          return new Response("Missing OAuth parameters", { status: 400 });
+        }
+
+        // Reconstruct the original OAuth authorization request from the hidden field
+        const reconstructedRequest = new Request(
+          url.origin + "/authorize" + rawParams,
+          { method: "GET", headers: request.headers },
+        );
+
+        let oauthReq;
+        try {
+          oauthReq = await env.OAUTH_PROVIDER.parseAuthRequest(reconstructedRequest);
+        } catch {
+          return new Response("Invalid authorization request", { status: 400 });
+        }
+
+        if (!password || password !== env.MCP_AUTH_PASSWORD) {
+          return new Response(renderLoginPage(rawParams, true), {
+            status: 401,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          });
+        }
+
+        const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
+          request:  oauthReq,
+          userId:   "owner",
+          metadata: { authorizedAt: new Date().toISOString() },
+          scope:    oauthReq.scope,
+          props:    {},
+        });
+        return Response.redirect(redirectTo, 302);
+      }
+
+      return new Response("Method not allowed", { status: 405 });
+    }
+
+    // ── Health check ─────────────────────────────────────────────────────────
+
+    if (url.pathname === "/" || url.pathname === "/health") {
       return new Response(JSON.stringify({
-        status: "ok",
-        server: "oura-mcp-server",
-        version: "1.0.0",
+        status:    "ok",
+        server:    "oura-mcp-server",
+        version:   "1.0.0",
         endpoints: { sleep: "/mcp/sleep", activity: "/mcp/activity" },
       }), { headers: { "Content-Type": "application/json" } });
     }
 
     return new Response("Not found", { status: 404 });
   },
-} satisfies ExportedHandler<Env>;
+};
+
+// ── Worker entry point ────────────────────────────────────────────────────────
+
+export default new OAuthProvider<Env>({
+  apiRoute:                    "/mcp/",
+  apiHandler:                  McpApiHandler,
+  defaultHandler,
+  authorizeEndpoint:           "/authorize",
+  tokenEndpoint:               "/oauth/token",
+  clientRegistrationEndpoint:  "/oauth/register",
+  // 30-day access tokens — long-lived for a single-user personal tool
+  accessTokenTTL:              3600 * 24 * 30,
+  // Refresh tokens never expire — re-auth only needed if explicitly revoked
+});

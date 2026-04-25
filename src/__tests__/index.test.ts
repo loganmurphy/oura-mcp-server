@@ -22,15 +22,24 @@ vi.mock("../oura", () => ({
 
 import * as cache from "../cache";
 import * as oura from "../oura";
-// Worker is the default export; import after mocks are set up.
-import worker from "../index";
+// Worker is the default export; handleMcp is exported for direct unit testing
+// (bypassing the OAuth wrapper which requires a real OAUTH_KV + valid Bearer token).
+import worker, { handleMcp } from "../index";
+import { SLEEP_TOOLS, ACTIVITY_TOOLS } from "../tools";
+import type { Env } from "../index";
+import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
-function makeEnv(token = "test-token"): { OURA_API_TOKEN: string; DB: D1Database } {
+function makeEnv(token = "test-token"): Env {
   return {
     OURA_API_TOKEN: token,
     DB: {} as D1Database,
+    OAUTH_KV: {} as KVNamespace,
+    MCP_AUTH_PASSWORD: "test-password",
+    // OAUTH_PROVIDER is injected by OAuthProvider at runtime; not needed for
+    // direct handleMcp tests.
+    OAUTH_PROVIDER: {} as OAuthHelpers,
   };
 }
 
@@ -42,8 +51,13 @@ function jsonRpc(method: string, params?: Record<string, unknown>, id: number = 
   return JSON.stringify({ jsonrpc: "2.0", id, method, params });
 }
 
+// post() calls handleMcp directly, bypassing the OAuthProvider wrapper.
+// This keeps MCP logic tests clean and independent of the OAuth layer.
 function post(path: string, body: string, env = makeEnv(), ctx = makeCtx()) {
-  return worker.fetch(
+  const isActivity = path.includes("/mcp/activity");
+  const tools      = isActivity ? ACTIVITY_TOOLS : SLEEP_TOOLS;
+  const serverName = isActivity ? "oura-activity-wellness" : "oura-sleep-recovery";
+  return handleMcp(
     new Request(`http://localhost${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -51,6 +65,8 @@ function post(path: string, body: string, env = makeEnv(), ctx = makeCtx()) {
     }),
     env,
     ctx,
+    tools,
+    serverName,
   );
 }
 
@@ -89,17 +105,25 @@ beforeEach(() => {
   vi.mocked(oura.getSleepSessions).mockResolvedValue({ data: [], next_token: null });
 });
 
-// ── Routing ───────────────────────────────────────────────────────────────────
+// ── Routing (via worker.fetch) ────────────────────────────────────────────────
+//
+// These tests exercise the OAuthProvider + defaultHandler routing layer.
+// OAUTH_KV is never touched for OPTIONS, /health, /, or /unknown requests.
 
 describe("routing", () => {
-  it("OPTIONS returns 204 with CORS headers", async () => {
+  it("OPTIONS /mcp/sleep returns 204 with CORS headers (OAuthProvider handles)", async () => {
+    // OAuthProvider echoes the request Origin back (not "*") and only adds
+    // CORS headers when the Origin header is present.
     const res = await worker.fetch(
-      new Request("http://localhost/mcp/sleep", { method: "OPTIONS" }),
+      new Request("http://localhost/mcp/sleep", {
+        method: "OPTIONS",
+        headers: { Origin: "http://localhost:3000" },
+      }),
       makeEnv(),
       makeCtx(),
     );
     expect(res.status).toBe(204);
-    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("http://localhost:3000");
   });
 
   it("/health returns status ok", async () => {
@@ -130,13 +154,15 @@ describe("routing", () => {
     expect(res.status).toBe(404);
   });
 
-  it("non-POST to /mcp/sleep returns 405", async () => {
+  it("unauthenticated request to /mcp/sleep returns 401", async () => {
+    // OAuthProvider intercepts /mcp/* without a Bearer token and returns 401
+    // before the request ever reaches McpApiHandler.
     const res = await worker.fetch(
-      new Request("http://localhost/mcp/sleep"),
+      new Request("http://localhost/mcp/sleep", { method: "POST" }),
       makeEnv(),
       makeCtx(),
     );
-    expect(res.status).toBe(405);
+    expect(res.status).toBe(401);
   });
 });
 
@@ -253,21 +279,21 @@ describe("tools/call — date-range tool (oura_daily_sleep)", () => {
   });
 });
 
-// ── tools/call — ?no_cache query param ───────────────────────────────────────
+// ── tools/call — forceSkipCache (no_cache) ───────────────────────────────────
 
-describe("tools/call — ?no_cache query param", () => {
-  it("bypasses cache for all tools in the request", async () => {
+describe("tools/call — forceSkipCache flag", () => {
+  it("bypasses cache when forceSkipCache is true", async () => {
     vi.mocked(oura.getDailySleep).mockResolvedValueOnce({ data: [] });
     const env = makeEnv();
     const ctx = makeCtx();
-    await worker.fetch(
-      new Request("http://localhost/mcp/sleep?no_cache", {
+    await handleMcp(
+      new Request("http://localhost/mcp/sleep", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: jsonRpc("tools/call", { name: "oura_daily_sleep", arguments: {} }),
       }),
-      env,
-      ctx,
+      env, ctx, SLEEP_TOOLS, "oura-sleep-recovery",
+      true, // forceSkipCache
     );
     expect(cache.getCachedRange).not.toHaveBeenCalled();
   });

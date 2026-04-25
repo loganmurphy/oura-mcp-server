@@ -8,7 +8,14 @@
     "type": "git",
     "url": "https://github.com/loganmurphy/oura-mcp-server.git"
   },
-  "keywords": ["mcp", "oura", "claude", "cloudflare-workers", "health", "wearables"],
+  "keywords": [
+    "mcp",
+    "oura",
+    "claude",
+    "cloudflare-workers",
+    "health",
+    "wearables"
+  ],
   "private": true,
   "scripts": {
     "lint": "oxlint --config .oxlintrc.json --deny-warnings src scripts",
@@ -47,6 +54,12 @@
       "esbuild",
       "sharp",
       "workerd"
+    ],
+    "ignoredBuiltDependencies": [
+      "lefthook"
     ]
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^0.4.0"
   }
 }

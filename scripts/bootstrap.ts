@@ -10,20 +10,20 @@ import {
 import { claudeCfgPath, loadDevVars, saveDevVars, slugify } from "./utils";
 
 const WORKER_NAME = "oura-mcp-server";
-const D1_NAME = "oura-cache";
-const ACCESS_APP_NAME = "oura-mcp-server";
-const SERVICE_TOKEN_NAME = "oura-mcp-server-claude";
+const D1_NAME     = "oura-cache";
+const KV_NAME     = "oura-oauth";
 const OURA_PAT_URL = "https://cloud.ouraring.com/personal-access-tokens";
 const OURA_SECRET_NAME = "OURA_API_TOKEN";
+const AUTH_SECRET_NAME = "MCP_AUTH_PASSWORD";
 
-const CF_SIGNUP_URL = "https://dash.cloudflare.com/sign-up";
+const CF_SIGNUP_URL    = "https://dash.cloudflare.com/sign-up";
 const CF_API_TOKENS_URL = "https://dash.cloudflare.com/profile/api-tokens";
 
-const CLAUDE_CFG_PATH = claudeCfgPath();
-const DEV_VARS_PATH = path.resolve(process.cwd(), ".dev.vars");
+const CLAUDE_CFG_PATH     = claudeCfgPath();
+const DEV_VARS_PATH       = path.resolve(process.cwd(), ".dev.vars");
 const WRANGLER_JSONC_PATH = path.resolve(process.cwd(), "wrangler.jsonc");
 const WRANGLER_EXAMPLE_PATH = path.resolve(process.cwd(), "wrangler.example.jsonc");
-const SCHEMA_PATH = path.resolve(process.cwd(), "migrations/001_init.sql");
+const SCHEMA_PATH         = path.resolve(process.cwd(), "migrations/001_init.sql");
 
 function openBrowser(url: string): void {
   const cmd =
@@ -33,16 +33,12 @@ function openBrowser(url: string): void {
   try { execSync(cmd, { stdio: "ignore" }); } catch { /* non-fatal */ }
 }
 
-// Wrangler's public OAuth client doesn't grant the Access scopes we need and
-// can't mint scoped tokens from its session, so we ask for a manually-created
-// API token once and reuse it for both SDK calls and the wrangler CLI.
 const REQUIRED_SCOPES: ReadonlyArray<[string, string]> = [
-  ["Account → Account Settings → Read", "list accounts, detect the workers.dev subdomain"],
-  ["Account → Workers Scripts → Edit", "deploy the Worker and set its secrets"],
-  ["Account → D1 → Edit", "create the cache database and apply migrations"],
-  ["Account → Access: Apps and Policies → Edit", "provision the Zero Trust app + policy"],
-  ["Account → Access: Service Tokens → Edit", "mint and rotate the token Claude Desktop uses"],
-  ["User → User Details → Read", "verify the token itself hasn't been revoked"],
+  ["Account → Account Settings → Read",    "list accounts, detect the workers.dev subdomain"],
+  ["Account → Workers Scripts → Edit",     "deploy the Worker and set its secrets"],
+  ["Account → Workers KV Storage → Edit",  "create the OAuth token storage namespace"],
+  ["Account → D1 → Edit",                  "create the cache database and apply migrations"],
+  ["User → User Details → Read",           "verify the token itself hasn't been revoked"],
 ];
 
 async function promptApiToken(): Promise<string> {
@@ -219,20 +215,41 @@ async function ensureD1(client: Cloudflare, accountId: string): Promise<string> 
   return id;
 }
 
-function writeWranglerConfig(d1DatabaseId: string): void {
-  step(5, "Local Worker config (wrangler.jsonc)");
+async function ensureKvNamespace(client: Cloudflare, accountId: string): Promise<string> {
+  step(5, "KV namespace for OAuth tokens");
+
+  // The library requires a binding named OAUTH_KV — the namespace title is cosmetic.
+  for await (const ns of client.kv.namespaces.list({ account_id: accountId })) {
+    if ((ns as { title?: string }).title === KV_NAME && ns.id) {
+      ok(`Found existing KV namespace ${c.cyan(KV_NAME)}`);
+      return ns.id;
+    }
+  }
+
+  info(`Creating KV namespace "${KV_NAME}"...`);
+  const created = await client.kv.namespaces.create({ account_id: accountId, title: KV_NAME });
+  const id = created.id;
+  if (!id) throw new Error("KV create returned no id");
+  ok(`Created KV namespace ${c.cyan(KV_NAME)} ${c.dim(`(${id})`)}`);
+  return id;
+}
+
+function writeWranglerConfig(d1DatabaseId: string, kvNamespaceId: string): void {
+  step(6, "Local Worker config (wrangler.jsonc)");
 
   if (!fs.existsSync(WRANGLER_EXAMPLE_PATH)) {
     throw new Error(`Missing ${WRANGLER_EXAMPLE_PATH}`);
   }
   const template = fs.readFileSync(WRANGLER_EXAMPLE_PATH, "utf8");
-  const out = template.replace(/YOUR_DATABASE_ID/g, d1DatabaseId);
+  const out = template
+    .replace(/YOUR_DATABASE_ID/g, d1DatabaseId)
+    .replace(/YOUR_KV_NAMESPACE_ID/g, kvNamespaceId);
   fs.writeFileSync(WRANGLER_JSONC_PATH, out);
-  ok(`Wrote wrangler.jsonc with database_id ${c.dim(d1DatabaseId)}`);
+  ok(`Wrote wrangler.jsonc with database_id ${c.dim(d1DatabaseId)} and kv_id ${c.dim(kvNamespaceId)}`);
 }
 
 function applyD1Schema(apiToken: string, accountId: string): void {
-  step(6, "D1 schema migration");
+  step(7, "D1 schema migration");
 
   if (!fs.existsSync(SCHEMA_PATH)) throw new Error(`Missing schema file ${SCHEMA_PATH}`);
   info("Applying migrations/001_init.sql...");
@@ -248,7 +265,7 @@ function applyD1Schema(apiToken: string, accountId: string): void {
 }
 
 async function ensureOuraToken(): Promise<string> {
-  step(7, "Oura Personal Access Token");
+  step(8, "Oura Personal Access Token");
 
   const existing = loadDevVars(DEV_VARS_PATH)[OURA_SECRET_NAME];
   if (existing) {
@@ -278,8 +295,31 @@ async function ensureOuraToken(): Promise<string> {
   return token;
 }
 
+async function promptMcpPassword(): Promise<string> {
+  step(9, "MCP server password");
+
+  const existing = loadDevVars(DEV_VARS_PATH)[AUTH_SECRET_NAME];
+  if (existing) {
+    const reuse = await confirm("Found existing MCP password in .dev.vars — use it?", true);
+    if (reuse) {
+      ok("Reusing existing MCP password");
+      return existing;
+    }
+  }
+
+  console.log("  This password protects your MCP server from unauthorized access.");
+  console.log("  Claude Desktop will prompt you to enter it once per auth session.");
+  console.log(`  ${c.dim("(Stored as a Worker secret — never in the codebase or logs.)")}\n`);
+
+  const password = await promptHidden("Choose a password (hidden)");
+  if (!password) throw new Error("Password cannot be empty");
+  saveDevVars(DEV_VARS_PATH, { [AUTH_SECRET_NAME]: password });
+  ok("Password saved to .dev.vars");
+  return password;
+}
+
 function deployWorker(apiToken: string, accountId: string): void {
-  step(8, "Deploy Worker to Cloudflare");
+  step(10, "Deploy Worker to Cloudflare");
 
   info("Running `wrangler deploy`... (first deploy takes ~20s)");
   const result = spawnSync("npx", ["wrangler", "deploy"], {
@@ -294,233 +334,44 @@ function deployWorker(apiToken: string, accountId: string): void {
   ok("Worker deployed");
 }
 
-async function setWorkerSecret(client: Cloudflare, accountId: string, value: string): Promise<void> {
-  step(9, "Set OURA_API_TOKEN secret on deployed Worker");
+async function setWorkerSecrets(
+  client: Cloudflare, accountId: string,
+  ouraToken: string, mcpPassword: string,
+): Promise<void> {
+  step(11, "Set Worker secrets");
 
   await client.workers.scripts.secrets.update(WORKER_NAME, {
     account_id: accountId,
     name: OURA_SECRET_NAME,
-    text: value,
+    text: ouraToken,
     type: "secret_text",
   });
   ok(`Secret ${c.cyan(OURA_SECRET_NAME)} set`);
-}
 
-
-async function ensureAccessEnabled(client: Cloudflare, accountId: string): Promise<void> {
-  // Fresh accounts need a Zero Trust organization before Access APIs work.
-  // Probe first — if it's already there we're done.
-  const probe = async () => {
-    try {
-      for await (const _ of client.zeroTrust.access.applications.list({ account_id: accountId })) break;
-      return true;
-    } catch (e) {
-      const msg = (e as Error).message ?? "";
-      if (!msg.includes("9999") && !msg.includes("not enabled")) throw e;
-      return false;
-    }
-  };
-
-  if (await probe()) return;
-
-  // Zero Trust enrollment can't be automated — the user has to sign up for
-  // the Free plan in the dashboard. It requires a credit card but CF never
-  // bills the Free tier. Takes a couple of minutes.
-  const dashUrl = `https://dash.cloudflare.com/${accountId}/one/`;
-  info("Cloudflare Zero Trust isn't enabled yet — you'll need to sign up for the Free plan.");
-  console.log(`  ${c.dim("It's free for up to 50 users. Requires a credit card for signup but is never billed.")}`);
-  console.log(`  ${c.dim("Takes ~2 min: pick a team name → choose Free plan → add billing info → Finish.")}`);
-  openBrowser(dashUrl);
-
-  for (let attempt = 0; attempt < 3; attempt++) {
-    await pressEnter("Press Enter once you've completed the Zero Trust signup...");
-    if (await probe()) { ok("Zero Trust enabled"); return; }
-    warn(`Zero Trust still not enabled (attempt ${attempt + 1}/3). Finish the wizard at ${c.cyan(dashUrl)}.`);
-  }
-  throw new Error(`Zero Trust still not enabled after 3 checks. Complete signup at ${dashUrl}, then re-run pnpm bootstrap.`);
-}
-
-// Cloudflare SDK Zero Trust responses include fields not yet in the type stubs.
-type CFApp    = { id?: string; domain?: string };
-type CFToken  = { id?: string; client_id?: string; client_secret?: string; name?: string; expires_at?: string };
-type CFPolicy = { id?: string; include?: Array<{ service_token?: { token_id?: string } }> };
-
-async function setupZeroTrust(
-  client: Cloudflare, accountId: string, workerDomain: string,
-): Promise<{ clientId: string; clientSecret: string }> {
-  step(10, "Cloudflare Access (Zero Trust) security");
-
-  await ensureAccessEnabled(client, accountId);
-
-  let appId: string | undefined;
-  for await (const a of client.zeroTrust.access.applications.list({ account_id: accountId })) {
-    const domain = (a as CFApp).domain;
-    if (domain === workerDomain) { appId = a.id; break; }
-  }
-
-  if (appId) {
-    ok(`Reusing Access application ${c.dim(`(${appId})`)}`);
-  } else {
-    const app = await client.zeroTrust.access.applications.create({
-      account_id: accountId,
-      name: ACCESS_APP_NAME,
-      domain: workerDomain,
-      type: "self_hosted",
-      session_duration: "720h",
-      skip_interstitial: true,
-    });
-    appId = app.id!;
-    ok(`Access application created ${c.dim(`(${appId})`)}`);
-  }
-
-  // client_secret is only returned on create — so reuse requires both the saved
-  // secret locally and a matching token still present on Cloudflare.
-  const saved = loadDevVars(DEV_VARS_PATH);
-  const savedClientId = saved["CF_ACCESS_CLIENT_ID"];
-  const savedClientSecret = saved["CF_ACCESS_CLIENT_SECRET"];
-
-  let svcId: string | undefined;
-  let clientId: string | undefined;
-  let clientSecret: string | undefined;
-  // Set when we need to replace a token (near-expiry rotation or stale same-named
-  // token whose secret we've lost). Deleted only after the replacement is in place.
-  let supersededTokenId: string | undefined;
-
-  // `client_id` is the public header value; the Access policy references the
-  // token by its internal `id` instead. Mixing them up yields error 12130.
-  if (savedClientId && savedClientSecret) {
-    for await (const t of client.zeroTrust.access.serviceTokens.list({ account_id: accountId })) {
-      if (t.client_id === savedClientId && t.id) {
-        const expiresAt = (t as CFToken).expires_at;
-        const nearExpiry = expiresAt
-          ? new Date(expiresAt).getTime() - Date.now() < 14 * 24 * 60 * 60 * 1000
-          : false;
-        if (nearExpiry) {
-          const expDate = new Date(expiresAt!).toISOString().slice(0, 10);
-          warn(`Saved service token expires on ${expDate} — rotating now`);
-          info("Claude Desktop will get new credentials; quit + relaunch after this finishes");
-          supersededTokenId = t.id; // delete after new token is saved
-          // Leave svcId undefined so the creation branch below fires.
-        } else {
-          svcId = t.id;
-          clientId = savedClientId;
-          clientSecret = savedClientSecret;
-          const expStr = expiresAt ? ` expires ${new Date(expiresAt).toISOString().slice(0, 10)}` : "";
-          ok(`Reusing existing service token ${c.dim(`(${clientId.slice(0, 8)}…${expStr})`)}`);
-        }
-        break;
-      }
-    }
-    if (!svcId && !savedClientId) {
-      info("Saved service token no longer exists on Cloudflare — creating a new one");
-    }
-  }
-
-  if (!svcId) {
-    // CF service tokens default to a 1-year expiry; we accept it. Re-running
-    // bootstrap within 14 days of expiry auto-rotates.
-    info(`Service token will use Cloudflare's ${c.bold("1-year")} default expiry — re-run ${c.cyan("pnpm bootstrap")} before then to auto-rotate.`);
-
-    // Stale same-named token from a past run whose secret we've lost — mark for
-    // deletion so we can create a fresh one.
-    for await (const t of client.zeroTrust.access.serviceTokens.list({ account_id: accountId })) {
-      if (t.name === SERVICE_TOKEN_NAME && t.id && t.id !== supersededTokenId) {
-        supersededTokenId = t.id;
-        info(`Found existing "${SERVICE_TOKEN_NAME}" token — will replace it`);
-        break;
-      }
-    }
-    const svc = await client.zeroTrust.access.serviceTokens.create({
-      account_id: accountId,
-      name: SERVICE_TOKEN_NAME,
-      // CF applies the 1-year default when `duration` is omitted.
-    } as unknown as Parameters<typeof client.zeroTrust.access.serviceTokens.create>[0]) as CFToken;
-    svcId = svc.id!;
-    clientId = svc.client_id!;
-    clientSecret = svc.client_secret!;
-    const expiresAt = svc.expires_at;
-    const expStr = expiresAt ? `, expires ${new Date(expiresAt).toISOString().slice(0, 10)}` : ", no expiry";
-    ok(`Service token created ${c.dim(`(${SERVICE_TOKEN_NAME}${expStr})`)}`);
-    // Save before deleting the old token so a delete failure still leaves us with
-    // a working replacement in .dev.vars. The actual delete happens after the
-    // policy block swaps to the new token — CF refuses (error 12139) otherwise.
-    saveDevVars(DEV_VARS_PATH, { CF_ACCESS_CLIENT_ID: clientId, CF_ACCESS_CLIENT_SECRET: clientSecret });
-  }
-
-  const POLICY_NAME = "Allow oura-mcp-server service token";
-  let policyOk = false;
-  for await (const p of client.zeroTrust.access.applications.policies.list(appId, { account_id: accountId })) {
-    const include = (p as CFPolicy).include;
-    if (include?.some((rule) => rule.service_token?.token_id === svcId)) {
-      ok("Reusing existing Access policy");
-      policyOk = true;
-      break;
-    }
-  }
-
-  if (!policyOk) {
-    // SDK type defs are incomplete for policy create — cast to bridge the gap.
-    await client.zeroTrust.access.applications.policies.create(
-      appId,
-      {
-        account_id: accountId,
-        name: POLICY_NAME,
-        decision: "non_identity",
-        include: [{ service_token: { token_id: svcId } }],
-      } as unknown as Parameters<typeof client.zeroTrust.access.applications.policies.create>[1],
-    );
-    ok("Access policy attached");
-  }
-
-  // Unhook any policies still referencing the old token before deleting it
-  // (error 12139 otherwise).
-  if (supersededTokenId) {
-    try {
-      for await (const p of client.zeroTrust.access.applications.policies.list(appId, { account_id: accountId })) {
-        const include = (p as CFPolicy).include;
-        if (p.id && include?.some((rule) => rule.service_token?.token_id === supersededTokenId)) {
-          await client.zeroTrust.access.applications.policies.delete(appId, p.id, { account_id: accountId });
-        }
-      }
-      await client.zeroTrust.access.serviceTokens.delete(supersededTokenId, { account_id: accountId });
-      ok("Removed superseded service token");
-    } catch (e) {
-      warn(`Could not delete old service token (${(e as Error).message}) — safe to remove manually in the Cloudflare dashboard`);
-    }
-  }
-
-  return { clientId: clientId!, clientSecret: clientSecret! };
+  await client.workers.scripts.secrets.update(WORKER_NAME, {
+    account_id: accountId,
+    name: AUTH_SECRET_NAME,
+    text: mcpPassword,
+    type: "secret_text",
+  });
+  ok(`Secret ${c.cyan(AUTH_SECRET_NAME)} set`);
 }
 
 interface McpRemoteEntry {
   command: string;
   args: string[];
-  env?: Record<string, string>;
 }
 
-async function mergeClaudeDesktopConfig(
-  workerDomain: string, clientId: string, clientSecret: string,
-): Promise<boolean> {
-  step(11, "Claude Desktop config");
+async function mergeClaudeDesktopConfig(workerDomain: string): Promise<boolean> {
+  step(12, "Claude Desktop config");
 
-  // Secrets live in `env` (mcp-remote expands ${VAR} in --header values) rather
-  // than inline in `args`, so they don't show up in `ps` output.
   const build = (endpoint: string): McpRemoteEntry => ({
     command: "npx",
-    args: [
-      "-y", "mcp-remote",
-      `https://${workerDomain}/mcp/${endpoint}`,
-      "--header", "CF-Access-Client-Id:${CF_ACCESS_CLIENT_ID}",
-      "--header", "CF-Access-Client-Secret:${CF_ACCESS_CLIENT_SECRET}",
-    ],
-    env: {
-      CF_ACCESS_CLIENT_ID: clientId,
-      CF_ACCESS_CLIENT_SECRET: clientSecret,
-    },
+    args: ["-y", "mcp-remote", `https://${workerDomain}/mcp/${endpoint}`],
   });
 
   const newEntries = {
-    "oura-sleep": build("sleep"),
+    "oura-sleep":    build("sleep"),
     "oura-activity": build("activity"),
   };
 
@@ -536,7 +387,7 @@ async function mergeClaudeDesktopConfig(
       console.log(`  ${c.dim(err instanceof Error ? err.message : String(err))}`);
       const proceed = await confirm("Skip this step? You can paste the snippet manually later.", true);
       if (proceed) {
-        printManualSnippet(workerDomain, clientId, clientSecret);
+        printManualSnippet(workerDomain);
         return false;
       }
     }
@@ -574,36 +425,18 @@ async function mergeClaudeDesktopConfig(
   return true;
 }
 
-function printManualSnippet(workerDomain: string, clientId: string, clientSecret: string): void {
+function printManualSnippet(workerDomain: string): void {
   console.log(`
   Add these two entries under "mcpServers" in:
     ${c.cyan(CLAUDE_CFG_PATH)}
 
     "oura-sleep": {
       "command": "npx",
-      "args": [
-        "-y", "mcp-remote",
-        "https://${workerDomain}/mcp/sleep",
-        "--header", "CF-Access-Client-Id:\${CF_ACCESS_CLIENT_ID}",
-        "--header", "CF-Access-Client-Secret:\${CF_ACCESS_CLIENT_SECRET}"
-      ],
-      "env": {
-        "CF_ACCESS_CLIENT_ID": "${clientId}",
-        "CF_ACCESS_CLIENT_SECRET": "${clientSecret}"
-      }
+      "args": ["-y", "mcp-remote", "https://${workerDomain}/mcp/sleep"]
     },
     "oura-activity": {
       "command": "npx",
-      "args": [
-        "-y", "mcp-remote",
-        "https://${workerDomain}/mcp/activity",
-        "--header", "CF-Access-Client-Id:\${CF_ACCESS_CLIENT_ID}",
-        "--header", "CF-Access-Client-Secret:\${CF_ACCESS_CLIENT_SECRET}"
-      ],
-      "env": {
-        "CF_ACCESS_CLIENT_ID": "${clientId}",
-        "CF_ACCESS_CLIENT_SECRET": "${clientSecret}"
-      }
+      "args": ["-y", "mcp-remote", "https://${workerDomain}/mcp/activity"]
     }
 `);
 }
@@ -615,11 +448,11 @@ async function main(): Promise<void> {
     "",
     "It creates (in your Cloudflare account):",
     "  • A D1 database for caching",
+    "  • A KV namespace for OAuth tokens",
     "  • A Worker that talks to the Oura API",
-    "  • Cloudflare Access (Zero Trust) so only you can reach it",
     "",
-    "And it updates your Claude Desktop config",
-    "(only the two oura-* entries — nothing else is touched).",
+    "Access is protected by a password you choose —",
+    "Claude Desktop will ask for it once per auth session.",
     "",
     `${c.bold("You'll need:")}`,
     `  • A ${c.cyan("Cloudflare account")} — we'll open signup if you don't have one`,
@@ -644,6 +477,10 @@ async function main(): Promise<void> {
   for await (const db of client.d1.database.list({ account_id: account.id, name: D1_NAME })) {
     if (db.name === D1_NAME) { existingD1 = true; break; }
   }
+  let existingKv = false;
+  for await (const ns of client.kv.namespaces.list({ account_id: account.id })) {
+    if ((ns as { title?: string }).title === KV_NAME) { existingKv = true; break; }
+  }
   const claudeCfgExists = fs.existsSync(CLAUDE_CFG_PATH);
 
   console.log();
@@ -653,10 +490,10 @@ async function main(): Promise<void> {
     "",
     `${c.bold("The following will happen:")}`,
     `  • D1 database "${D1_NAME}" — ${existingD1 ? c.dim("reuse existing") : c.green("create new")}`,
+    `  • KV namespace "${KV_NAME}" — ${existingKv ? c.dim("reuse existing") : c.green("create new")}`,
     `  • Apply D1 schema (idempotent)`,
     `  • Deploy Worker "${WORKER_NAME}" (create on first run, update otherwise)`,
-    `  • Set OURA_API_TOKEN secret on the Worker`,
-    `  • Cloudflare Access app, service token & policy — reuse when possible, otherwise create`,
+    `  • Set OURA_API_TOKEN + MCP_AUTH_PASSWORD secrets on the Worker`,
     `  • ${claudeCfgExists ? "Update" : "Create"} ${c.cyan(CLAUDE_CFG_PATH)}`,
     `    ${c.dim("(other MCP servers in this file are preserved)")}`,
   ]);
@@ -665,24 +502,27 @@ async function main(): Promise<void> {
     return;
   }
 
-  const dbId = await ensureD1(client, account.id);
-  writeWranglerConfig(dbId);
+  const dbId  = await ensureD1(client, account.id);
+  const kvId  = await ensureKvNamespace(client, account.id);
+  writeWranglerConfig(dbId, kvId);
   applyD1Schema(apiToken, account.id);
   const ouraToken = await ensureOuraToken();
+  const mcpPassword = await promptMcpPassword();
   deployWorker(apiToken, account.id);
-  await setWorkerSecret(client, account.id, ouraToken);
-  const { clientId, clientSecret } = await setupZeroTrust(client, account.id, workerDomain);
-  const configUpdated = await mergeClaudeDesktopConfig(workerDomain, clientId, clientSecret);
+  await setWorkerSecrets(client, account.id, ouraToken, mcpPassword);
+  const configUpdated = await mergeClaudeDesktopConfig(workerDomain);
 
   console.log();
   banner("✅  Setup complete!", [
     `Worker:    ${c.cyan(`https://${workerDomain}`)}`,
-    `Protected: ${c.green("yes")} — only your Service Token can reach it`,
     "",
     configUpdated
       ? `${c.bold("Next:")} quit Claude Desktop fully (Cmd+Q) and reopen,`
       : `${c.bold("Next:")} add the snippet above to claude_desktop_config.json,`,
-    `       then ask: "What was my sleep score last night?"`,
+    "       then ask: \"What was my sleep score last night?\"",
+    "",
+    `${c.dim("First run: Claude Desktop will open a browser to enter your MCP password.")}`,
+    `${c.dim("After that, the token lasts 30 days before re-auth.")}`,
   ]);
 }
 

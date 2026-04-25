@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@cloudflare/workers-oauth-provider':
+        specifier: ^0.4.0
+        version: 0.4.0
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250409.0
@@ -104,6 +108,9 @@ packages:
     engines: {node: '>=16'}
     cpu: [x64]
     os: [win32]
+
+  '@cloudflare/workers-oauth-provider@0.4.0':
+    resolution: {integrity: sha512-UtbV8hjC2NloB+Ds6J6v/9HiG8rx8MbdeYGCyFwOACT5vANWzDL6SKo3W5UZymsXiameAgC7jAmtUx4cc+Qpaw==}
 
   '@cloudflare/workers-types@4.20260420.1':
     resolution: {integrity: sha512-DHT9JnSn9cIiCSdL76OxW+Xvc1+ml1CWzWvgVwreoHQ+E604aeFxPPHp9X7nE+XRWm2NH4l0OgtxUI5T/nuI3g==}
@@ -1356,6 +1363,8 @@ snapshots:
 
   '@cloudflare/workerd-windows-64@1.20260420.1':
     optional: true
+
+  '@cloudflare/workers-oauth-provider@0.4.0': {}
 
   '@cloudflare/workers-types@4.20260420.1': {}
 
