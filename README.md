@@ -96,19 +96,21 @@ For local dev use `http://localhost:8787/mcp` and keep `pnpm dev` running.
 
 > Requires HTTPS. Use a deployed Worker URL **or** an [ngrok tunnel](#testing-with-ngrok) pointing at `localhost:8787` for local testing.
 
-1. Open **claude.ai** → click your avatar (bottom-left) → **Settings**
-2. Go to **Integrations** → **Custom Connectors** → **Add custom connector**
+**`pnpm bootstrap` opens this page automatically and copies the URL to your clipboard.**
+
+1. Go to **[claude.ai/settings/connectors](https://claude.ai/settings/connectors)**
+2. Click **Add custom connector**
 3. Paste your Worker URL (or ngrok URL for local testing):
    ```
    https://oura-mcp-server.<your-subdomain>.workers.dev/mcp
    ```
-4. Click **Connect** — a popup opens and navigates to your Worker's login page
+4. Click **Connect** — a popup opens to your Worker's login page
 5. Enter your MCP password and click **Authorize**
-6. The popup closes and you'll see "Oura" listed under active connectors
+6. The popup closes and Oura appears in your active connectors
 
 In any conversation, the Oura tools will be available automatically. Start a new chat and ask: *"What was my sleep score last night?"*
 
-To disconnect: Settings → Integrations → Custom Connectors → click the three-dot menu next to Oura → **Remove**.
+To disconnect: [claude.ai/settings/connectors](https://claude.ai/settings/connectors) → three-dot menu next to Oura → **Remove**.
 
 ---
 
@@ -313,7 +315,7 @@ ngrok http 8787  # terminal 2 — copy the https://xxx.ngrok-free.app URL
     [ ] "What was my sleep score last night?" returns data
 
 [ ] Claude.ai web (ngrok URL)
-    [ ] Settings → Integrations → Custom Connectors → Add → paste ngrok URL → Connect
+    [ ] claude.ai/settings/connectors → Add → paste ngrok URL → Connect
     [ ] Login popup opens, password accepted, "Connected to Oura" shown, popup closes
     [ ] New conversation: Oura tools available
     [ ] Sleep / readiness / activity queries return data

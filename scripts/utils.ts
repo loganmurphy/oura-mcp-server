@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 
 export function claudeCfgPath(): string {
   switch (process.platform) {
@@ -37,6 +38,27 @@ export function saveDevVars(filePath: string, vars: Record<string, string>): voi
   const merged = { ...existing, ...vars };
   const content = Object.entries(merged).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
   fs.writeFileSync(filePath, content);
+}
+
+/** Open a URL in the default browser (best-effort, silent on failure). */
+export function openBrowser(url: string): void {
+  const cmd =
+    process.platform === "darwin" ? "open" :
+    process.platform === "win32"  ? "cmd" :
+    "xdg-open";
+  const args = process.platform === "win32" ? ["/c", "start", url] : [url];
+  spawnSync(cmd, args, { stdio: "ignore" });
+}
+
+/** Copy text to the system clipboard (best-effort, silent on failure). */
+export function copyToClipboard(text: string): boolean {
+  const cmd =
+    process.platform === "darwin" ? "pbcopy" :
+    process.platform === "win32"  ? "clip"   :
+    "xclip";
+  const args = process.platform === "linux" ? ["-selection", "clipboard"] : [];
+  const result = spawnSync(cmd, args, { input: text, stdio: ["pipe", "ignore", "ignore"] });
+  return result.status === 0;
 }
 
 export function slugify(name: string, fallback = "oura-mcp"): string {

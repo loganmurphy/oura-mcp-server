@@ -8,7 +8,7 @@ import {
   banner, c, confirm, closePrompts, info, ok, pick,
   prompt, promptHidden, pressEnter, step, warn,
 } from "./prompts";
-import { claudeCfgPath, loadDevVars, saveDevVars, slugify } from "./utils";
+import { copyToClipboard, loadDevVars, openBrowser, saveDevVars, slugify } from "./utils";
 
 const WORKER_NAME      = "oura-mcp-server";
 const D1_NAME          = "oura-cache";
@@ -17,8 +17,10 @@ const OURA_PAT_URL     = "https://cloud.ouraring.com/personal-access-tokens";
 const OURA_SECRET_NAME = "OURA_API_TOKEN";
 const AUTH_SECRET_NAME = "MCP_AUTH_PASSWORD";
 
-const CLAUDE_CFG_PATH       = claudeCfgPath();
 const DEV_VARS_PATH         = path.resolve(process.cwd(), ".dev.vars");
+// Script-only state (account ID, subdomain) lives here rather than .dev.vars
+// so wrangler never picks it up as Worker bindings and generates spurious types.
+const BOOTSTRAP_STATE_PATH  = path.resolve(process.cwd(), ".bootstrap-state");
 const WRANGLER_JSONC_PATH   = path.resolve(process.cwd(), "wrangler.jsonc");
 const WRANGLER_EXAMPLE_PATH = path.resolve(process.cwd(), "wrangler.example.jsonc");
 const SCHEMA_PATH           = path.resolve(process.cwd(), "migrations/001_init.sql");
@@ -120,7 +122,7 @@ async function pickAccount(client: Cloudflare): Promise<{ id: string; name: stri
   }
   if (accounts.length === 0) throw new Error("No Cloudflare accounts found");
 
-  const saved = loadDevVars(DEV_VARS_PATH)["CLOUDFLARE_ACCOUNT_ID"] ?? process.env["CLOUDFLARE_ACCOUNT_ID"];
+  const saved = loadDevVars(BOOTSTRAP_STATE_PATH)["CLOUDFLARE_ACCOUNT_ID"] ?? process.env["CLOUDFLARE_ACCOUNT_ID"];
   if (saved) {
     const match = accounts.find((a) => a.id === saved);
     if (match) {
@@ -146,7 +148,7 @@ async function pickAccount(client: Cloudflare): Promise<{ id: string; name: stri
     ok(`Using ${c.cyan(selected.name)}`);
   }
 
-  saveDevVars(DEV_VARS_PATH, { CLOUDFLARE_ACCOUNT_ID: selected.id });
+  saveDevVars(BOOTSTRAP_STATE_PATH, { CLOUDFLARE_ACCOUNT_ID: selected.id });
   return selected;
 }
 
@@ -160,7 +162,7 @@ async function ensureWorkersSubdomain(
     const sub = (res as { subdomain?: string }).subdomain;
     if (sub) {
       ok(`workers.dev subdomain: ${c.cyan(`${sub}.workers.dev`)}`);
-      saveDevVars(DEV_VARS_PATH, { WORKER_SUBDOMAIN: sub });
+      saveDevVars(BOOTSTRAP_STATE_PATH, { WORKER_SUBDOMAIN: sub });
       return sub;
     }
   } catch (e) {
@@ -174,7 +176,7 @@ async function ensureWorkersSubdomain(
       const res = await client.workers.subdomains.update({ account_id: accountId, subdomain: chosen });
       const sub = (res as { subdomain?: string }).subdomain ?? chosen;
       ok(`workers.dev subdomain: ${c.cyan(`${sub}.workers.dev`)}`);
-      saveDevVars(DEV_VARS_PATH, { WORKER_SUBDOMAIN: sub });
+      saveDevVars(BOOTSTRAP_STATE_PATH, { WORKER_SUBDOMAIN: sub });
       return sub;
     } catch (e) {
       const msg = (e as Error).message ?? "";
@@ -339,85 +341,12 @@ async function setWorkerSecrets(
   }
 }
 
-// ── Claude Desktop config ─────────────────────────────────────────────────────
-
-interface McpRemoteEntry {
-  command: string;
-  args: string[];
-}
-
-async function mergeClaudeDesktopConfig(workerDomain: string): Promise<boolean> {
-  step(12, "Claude Desktop config");
-
-  const newEntries = {
-    "oura": {
-      command: "npx",
-      args: ["-y", "mcp-remote", `https://${workerDomain}/mcp`],
-    } as McpRemoteEntry,
-  };
-
-  let config: { mcpServers?: Record<string, McpRemoteEntry> } & Record<string, unknown> = {};
-  const exists = fs.existsSync(CLAUDE_CFG_PATH);
-
-  if (exists) {
-    try {
-      const raw = fs.readFileSync(CLAUDE_CFG_PATH, "utf8");
-      if (raw.trim()) config = JSON.parse(raw);
-    } catch (err) {
-      warn("Couldn't parse existing config:");
-      console.log(`  ${c.dim(err instanceof Error ? err.message : String(err))}`);
-      if (await confirm("Skip this step? You can paste the snippet manually later.", true)) {
-        printManualSnippet(workerDomain);
-        return false;
-      }
-    }
-  }
-
-  const existingServers = config.mcpServers ?? {};
-  const otherServers = Object.keys(existingServers).filter(
-    (k) => k !== "oura" && k !== "oura-sleep" && k !== "oura-activity",
-  );
-  if (otherServers.length > 0) {
-    console.log(`  Preserving ${otherServers.length} other MCP server(s): ${c.dim(otherServers.join(", "))}`);
-  }
-  if (existingServers["oura"] || existingServers["oura-sleep"] || existingServers["oura-activity"]) {
-    console.log(`  ${c.dim("Existing oura entries will be replaced with the consolidated endpoint.")}`);
-  }
-
-  // Remove old split entries if present — consolidated endpoint replaces them.
-  delete existingServers["oura-sleep"];
-  delete existingServers["oura-activity"];
-
-  config.mcpServers = { ...existingServers, ...newEntries };
-
-  const bak = `${CLAUDE_CFG_PATH}.bak`;
-  if (exists) fs.copyFileSync(CLAUDE_CFG_PATH, bak);
-  else fs.mkdirSync(path.dirname(CLAUDE_CFG_PATH), { recursive: true });
-
-  fs.writeFileSync(CLAUDE_CFG_PATH, JSON.stringify(config, null, 2) + "\n");
-  if (exists && fs.existsSync(bak)) fs.unlinkSync(bak);
-  ok(`Config updated at ${c.dim(CLAUDE_CFG_PATH)}`);
-  return true;
-}
-
-function printManualSnippet(workerDomain: string): void {
-  console.log(`
-  Add this entry under "mcpServers" in:
-    ${c.cyan(CLAUDE_CFG_PATH)}
-
-    "oura": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "https://${workerDomain}/mcp"]
-    }
-`);
-}
-
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
   banner("oura-mcp-server — Bootstrap", [
     "This will set up everything needed to chat with",
-    "your Oura Ring data inside Claude Desktop.",
+    "your Oura Ring data in Claude.",
     "",
     "It creates (in your Cloudflare account):",
     "  • A D1 database for caching",
@@ -452,8 +381,6 @@ async function main(): Promise<void> {
   for await (const ns of client.kv.namespaces.list({ account_id: account.id })) {
     if ((ns as { title?: string }).title === KV_NAME) { existingKv = true; break; }
   }
-  const claudeCfgExists = fs.existsSync(CLAUDE_CFG_PATH);
-
   console.log();
   banner("Ready to provision", [
     `Cloudflare account:  ${c.cyan(account.name)} ${c.dim(`(${account.id})`)}`,
@@ -465,8 +392,6 @@ async function main(): Promise<void> {
     `  • Apply D1 schema (idempotent)`,
     `  • Deploy Worker "${WORKER_NAME}" (create on first run, update otherwise)`,
     `  • Set OURA_API_TOKEN + MCP_AUTH_PASSWORD secrets`,
-    `  • ${claudeCfgExists ? "Update" : "Create"} ${c.cyan(CLAUDE_CFG_PATH)}`,
-    `    ${c.dim("(other MCP servers preserved)")}`,
   ]);
   if (!(await confirm("Proceed?", true))) {
     console.log("  Cancelled — no changes were made.");
@@ -491,18 +416,20 @@ async function main(): Promise<void> {
   const mcpPassword = await promptMcpPassword();
   deployWorker(account.id);
   await setWorkerSecrets(client, account.id, ouraToken, mcpPassword);
-  const configUpdated = await mergeClaudeDesktopConfig(workerDomain);
+
+  const mcpUrl = `https://${workerDomain}/mcp`;
+  const clipped = copyToClipboard(mcpUrl);
+  openBrowser("https://claude.ai/settings/connectors");
 
   console.log();
   banner("✅  Setup complete!", [
     `Worker:  ${c.cyan(`https://${workerDomain}`)}`,
     "",
-    configUpdated
-      ? `${c.bold("Next:")} quit Claude Desktop fully (Cmd+Q) and reopen,`
-      : `${c.bold("Next:")} add the snippet above to claude_desktop_config.json,`,
-    "       then ask: \"What was my sleep score last night?\"",
+    `${c.bold("Connect Claude:")} ${clipped ? "MCP URL copied to clipboard —" : "paste this URL:"}`,
+    `  ${c.cyan(mcpUrl)}`,
+    `  ${c.dim("(browser opened to claude.ai/settings/connectors)")}`,
     "",
-    `${c.dim("First run: Claude Desktop opens a browser for your MCP password.")}`,
+    `${c.dim("First connection opens a browser for your MCP password.")}`,
     `${c.dim("Token lasts 30 days — then a quick browser re-auth.")}`,
   ]);
 }

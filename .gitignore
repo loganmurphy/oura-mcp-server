@@ -10,6 +10,8 @@ node_modules/
 # Local secrets — never commit
 .dev.vars
 .dev.vars.bak
+# Bootstrap script state (CF account ID, subdomain) — not Worker bindings
+.bootstrap-state
 
 # TypeScript
 *.tsbuildinfo
