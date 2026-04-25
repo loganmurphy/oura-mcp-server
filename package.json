@@ -30,7 +30,6 @@
     "reset": "rm -f .dev.vars wrangler.jsonc && echo 'Cleared .dev.vars + wrangler.jsonc. Re-run `pnpm bootstrap` to start fresh.'"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250409.0",
     "@types/node": "^25.6.0",
     "@vitest/coverage-v8": "^4.1.5",
     "cloudflare": "^5.2.0",
