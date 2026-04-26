@@ -12,6 +12,8 @@ pnpm bootstrap      # Interactive wizard — provisions D1, KV, deploys Worker, 
 pnpm connect-local  # Set up local credentials + D1 schema (no Cloudflare needed)
 pnpm revoke         # Invalidate all active OAuth sessions in KV (Claude re-auths on next use)
 pnpm reset          # Clear .dev.vars + .bootstrap-state + wrangler.jsonc (local state only, does not touch KV)
+pnpm format         # Prettier (write)
+pnpm format:check   # Prettier (check only — used by pre-commit hook)
 pnpm lint           # oxlint (typescript/no-explicit-any + recommended rules, --deny-warnings)
 pnpm test           # Vitest unit tests
 pnpm coverage       # Vitest + v8 coverage (≥90% threshold)
@@ -21,17 +23,21 @@ npx tsc --noEmit                             # Type-check the Worker (no build s
 
 ## Code style
 
+Prettier enforces formatting on every commit (`pnpm format:check` runs in the pre-commit hook). Config: no semis, trailing commas, 100-char print width. Run `pnpm format` to auto-fix before committing.
+
 - No section-header comments (`// ── Foo ────`). Comments only where behavior is non-obvious.
 
 Pre-commit hooks are managed by **lefthook** (`lefthook.yml`). They install automatically on `pnpm install` and run lint + both typechecks in parallel before every commit. To run manually: `pnpm lefthook run pre-commit`.
 
 D1 migrations:
+
 ```bash
 npx wrangler d1 execute oura-cache --local --file=./migrations/001_init.sql   # local
 npx wrangler d1 execute oura-cache --remote --file=./migrations/001_init.sql  # production
 ```
 
 `wrangler.jsonc` is gitignored — copy from the template and fill in both IDs:
+
 ```bash
 cp wrangler.example.jsonc wrangler.jsonc
 ```
@@ -79,6 +85,7 @@ POST /authorize → defaultHandler  validate MCP_AUTH_PASSWORD, completeAuthoriz
 The auth UI is a password form served at `GET /authorize`. On submit it calls `env.OAUTH_PROVIDER.completeAuthorization()` and redirects back to the client. `mcp-remote` handles the full OAuth PKCE flow automatically — the user just enters their password in the browser that opens.
 
 **Env bindings:**
+
 - `OAUTH_KV: KVNamespace` — required by `@cloudflare/workers-oauth-provider` (binding name is hardcoded in the library)
 - `MCP_AUTH_PASSWORD: string` — Worker secret; checked by the login form
 - `OAUTH_PROVIDER: OAuthHelpers` — injected by OAuthProvider at runtime into env before delegating to handlers
@@ -94,15 +101,18 @@ The auth UI is a password form served at `GET /authorize`. On submit it calls `e
 `src/__tests__/mocks/cloudflare-workers.ts` provides a minimal `WorkerEntrypoint` stub — `cloudflare:workers` is not available in Node's ESM loader, so `vitest.config.ts` maps it to this stub (with `server.deps.inline` forcing `@cloudflare/workers-oauth-provider` through Vite's pipeline so the alias applies to its internal imports too).
 
 **End-to-end testing with ngrok:** Claude.ai web and mobile require HTTPS. Use ngrok to expose the local dev server:
+
 ```bash
 pnpm dev          # terminal 1
 ngrok http 8787   # terminal 2 — produces https://xxx.ngrok-free.app
 ```
+
 Use the ngrok URL in place of the Cloudflare Worker URL when testing Claude.ai web/mobile integrations. See README for the full pre-merge checklist.
 
 ### Cache strategy (`src/cache.ts`)
 
 `handleDateRangeTool`:
+
 1. Enumerates all dates in the requested range via `datesInRange()`
 2. Queries D1 for cached rows — TTL is **5m today / 6h yesterday / 24h older**
 3. **Full cache hit** → returns JSON immediately
@@ -113,6 +123,7 @@ Multi-session days (e.g. nap + main sleep in `sleep_sessions`) are stored as an 
 **Empty responses are never cached.** An empty `data: []` typically means the ring hasn't synced yet — open the Oura app to trigger a sync. Caching an empty response would serve stale emptiness until TTL expires, so empty results are always passed through uncached.
 
 **Cache bypass — two levels:**
+
 - `skip_cache: true` tool argument — per-call, Claude can pass this when data seems stale
 - `?no_cache` query param on the endpoint URL — per-request; useful for `curl` smoke tests
 
@@ -129,6 +140,7 @@ Adding a new tool: add the Oura fetch function in `oura.ts`, add the `ToolDef` t
 All endpoints are under `https://api.ouraring.com/v2/usercollection/`. Date-range endpoints accept `start_date`/`end_date` (YYYY-MM-DD) and return `{ data: [...], next_token }`. Defaults to last 7 days when params are omitted. The token is passed as `Authorization: Bearer`.
 
 **Date conventions (empirically verified):**
+
 - Sleep/readiness/SpO2 use the **wake-up date** for the `day` field — a session starting the night of Apr 23 and ending the morning of Apr 24 has `day: "2026-04-24"`. Use today's date to get last night's data.
 - Activity/workouts/stress use the **calendar date** for the `day` field.
 - `oura_daily_sleep` `end_date` is **inclusive** (Oura API exception).
