@@ -41,26 +41,34 @@ The wizard handles everything:
 3. Create D1 (`oura-cache`) and KV (`oura-oauth`) — or reuse if they exist
 4. Prompt for your Oura PAT and a password for the MCP login page
 5. Deploy the Worker and set secrets
-6. Copy the MCP URL to your clipboard and open `claude.ai/settings/connectors`
+6. Copy the MCP URL to your clipboard and open `claude.ai/settings/connectors` (first run only)
 
 Re-running is fully idempotent.
 
 ### Local dev first?
 
 ```bash
-pnpm connect-local   # prompts for tokens, wires Claude Desktop, applies local D1 schema
+pnpm connect-local   # prompts for tokens, applies local D1 schema, guides ngrok tunnel setup
 pnpm dev             # keep running in a separate terminal
 ```
 
-Fully quit and relaunch Claude Desktop. Run `pnpm bootstrap` when ready to deploy.
+Run `pnpm bootstrap` when ready to deploy.
 
 ---
 
-## Connecting clients
+## Connect to Claude
 
-All clients connect to: `https://oura-mcp-server.<your-subdomain>.workers.dev/mcp`
+All clients connect to the same MCP endpoint. `pnpm bootstrap` copies this URL to your clipboard on completion:
 
-> **Testing without deploying?** Use [ngrok](#testing-with-ngrok) to expose `localhost:8787` over HTTPS — required by Claude.ai web and mobile.
+```
+https://oura-mcp-server.<your-subdomain>.workers.dev/mcp
+```
+
+### Claude.ai (web) and Claude mobile
+
+Settings → Integrations → [Custom Connectors](https://claude.ai/settings/connectors) → Add custom connector → paste URL → Connect → enter password → Authorize.
+
+`pnpm bootstrap` and `pnpm connect-local` (with ngrok) open this page and copy the URL automatically.
 
 ### Claude Desktop
 
@@ -83,18 +91,6 @@ For local dev use `http://localhost:8787/mcp` (no ngrok needed — Claude Deskto
 
 ---
 
-### Claude.ai (web) and Claude mobile
-
-> Requires HTTPS. Use a deployed Worker URL or an [ngrok tunnel](#testing-with-ngrok).
-
-`pnpm bootstrap` opens this page and copies the URL automatically on first run.
-
-**Web:** Settings → Integrations → [Custom Connectors](https://claude.ai/settings/connectors) → Add custom connector → paste URL → Connect → enter password → Authorize.
-
-**Mobile:** Menu → Settings → Integrations → Add integration → paste URL → Connect → enter password in browser → Authorize.
-
----
-
 ## Local development
 
 ```bash
@@ -105,9 +101,9 @@ npx wrangler d1 execute oura-cache --local --file=./migrations/001_init.sql
 pnpm dev   # http://localhost:8787
 ```
 
----
+### Testing with ngrok
 
-## Testing with ngrok
+Claude.ai web and mobile require HTTPS. Use ngrok to expose the local dev server:
 
 ```bash
 brew install ngrok/ngrok/ngrok
@@ -117,7 +113,7 @@ pnpm dev             # terminal 1
 ngrok http 8787      # terminal 2 → https://xxxx.ngrok-free.app
 ```
 
-Use the ngrok URL anywhere the Worker URL appears. The `X-Forwarded-Proto` header is honored so OAuth discovery returns correct `https://` endpoints.
+`pnpm connect-local` detects a running ngrok tunnel automatically, copies the MCP URL to your clipboard, and opens `claude.ai/settings/connectors`.
 
 > Free tier URLs change on restart — re-add the integration in Claude.ai when that happens.
 
@@ -220,7 +216,7 @@ All tools accept `start_date`, `end_date`, and `skip_cache` (bool).
 
 **Oura 401 / token rejected** — PATs expire ~every 3 months. Rotate: `npx wrangler secret put OURA_API_TOKEN` (no redeploy needed).
 
-**Rotate MCP password** — `pnpm bootstrap` (updates the secret), then `pnpm revoke` (invalidates existing sessions so Claude re-auths with the new password).
+**Rotate MCP password** — `npx wrangler secret put MCP_AUTH_PASSWORD`, then `pnpm revoke` (invalidates existing sessions so Claude re-auths with the new password).
 
 **`pnpm bootstrap` fails at Cloudflare login** — run `npx wrangler login` manually first.
 
@@ -239,7 +235,7 @@ src/
   ui.ts             Login and success page HTML
 scripts/
   bootstrap.ts      Setup wizard (D1, KV, Worker deploy, secrets)
-  connect-local.ts  Wire Claude Desktop to the local dev server
+  connect-local.ts  Credentials + D1 schema for local dev; guides ngrok tunnel setup
   revoke.ts         Purge all OAuth KV tokens to force re-auth
 migrations/
   001_init.sql      D1 schema
