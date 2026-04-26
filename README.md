@@ -118,9 +118,11 @@ curl -s -X POST $BASE/mcp -H "Content-Type: application/json" \
 
 ### Full OAuth flow (cURL PKCE)
 
-Run these blocks in order. The Python listener in step 3 captures and decodes the auth code automatically — you only need to log in when prompted.
+No browser required — curl handles the full flow end-to-end. Run this as one block, substituting your `MCP_AUTH_PASSWORD`:
 
 ```bash
+MCP_PASSWORD="your-password-here"
+
 # 1. Register a client
 CLIENT=$(curl -s -X POST $BASE/oauth/register -H "Content-Type: application/json" \
   -d '{"client_name":"curl-test","redirect_uris":["http://localhost:9999/callback"],
@@ -131,32 +133,18 @@ CLIENT_ID=$(echo $CLIENT | jq -r .client_id)
 # 2. PKCE challenge
 CODE_VERIFIER=$(openssl rand -base64 32 | tr -d '=+/' | cut -c1-43)
 CODE_CHALLENGE=$(printf '%s' "$CODE_VERIFIER" | openssl dgst -sha256 -binary | base64 | tr '+/' '-_' | tr -d '=')
-```
 
-```bash
-# 3. Start a listener that captures and decodes the auth code automatically,
-#    then open the URL in your browser and log in.
-#    The success page fires a hidden iframe to localhost:9999 — the listener catches it.
-node -e "
-const http = require('http');
-const fs = require('fs');
-const server = http.createServer((req, res) => {
-  res.end('OK');
-  const m = req.url.match(/[?&]code=([^&]+)/);
-  if (m) fs.writeFileSync('/tmp/oauth_code.txt', decodeURIComponent(m[1]));
-  server.close();
-});
-server.listen(9999);
-" &
-LISTENER_PID=$!
-echo "Open this URL in your browser and log in:"
-echo "$BASE/authorize?client_id=$CLIENT_ID&response_type=code&redirect_uri=http://localhost:9999/callback&code_challenge=$CODE_CHALLENGE&code_challenge_method=S256&state=test"
-wait $LISTENER_PID
-AUTH_CODE=$(cat /tmp/oauth_code.txt)
-echo "Got code: ${AUTH_CODE:0:20}..."
-```
+# 3. GET the login form, then POST the password to complete authorization
+FORM_HTML=$(curl -s "$BASE/authorize?client_id=$CLIENT_ID&response_type=code&redirect_uri=http://localhost:9999/callback&code_challenge=$CODE_CHALLENGE&code_challenge_method=S256&state=test")
+OAUTH_PARAMS=$(echo "$FORM_HTML" | grep -o 'name="oauth_params" value="[^"]*"' | sed 's/name="oauth_params" value="//;s/"$//' | sed 's/&amp;/\&/g')
+AUTH_PAGE=$(curl -s -X POST $BASE/authorize \
+  --data-urlencode "oauth_params=$OAUTH_PARAMS" \
+  --data-urlencode "password=$MCP_PASSWORD")
 
-```bash
+# Extract and decode the auth code from the success page iframe
+RAW_CODE=$(echo "$AUTH_PAGE" | grep -o 'code=[^&"]*' | head -1 | sed 's/code=//')
+AUTH_CODE=$(node -e "process.stdout.write(decodeURIComponent('$RAW_CODE'))")
+
 # 4. Exchange code for token
 TOKEN=$(curl -s -X POST $BASE/oauth/token \
   --data-urlencode "grant_type=authorization_code" \
