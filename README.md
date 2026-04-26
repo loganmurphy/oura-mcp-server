@@ -137,19 +137,16 @@ CODE_CHALLENGE=$(printf '%s' "$CODE_VERIFIER" | openssl dgst -sha256 -binary | b
 # 3. Start a listener that captures and decodes the auth code automatically,
 #    then open the URL in your browser and log in.
 #    The success page fires a hidden iframe to localhost:9999 — the listener catches it.
-python3 -c "
-import socket, urllib.parse, re
-s = socket.socket()
-s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(('', 9999))
-s.listen(1)
-conn, _ = s.accept()
-data = conn.recv(4096).decode('utf-8', errors='ignore')
-conn.send(b'HTTP/1.1 200 OK\r\n\r\nOK')
-conn.close(); s.close()
-m = re.search(r'[?&]code=([^& \r\n]+)', data)
-if m:
-    with open('/tmp/oauth_code.txt', 'w') as f: f.write(urllib.parse.unquote(m.group(1)))
+node -e "
+const http = require('http');
+const fs = require('fs');
+const server = http.createServer((req, res) => {
+  res.end('OK');
+  const m = req.url.match(/[?&]code=([^&]+)/);
+  if (m) fs.writeFileSync('/tmp/oauth_code.txt', decodeURIComponent(m[1]));
+  server.close();
+});
+server.listen(9999);
 " &
 LISTENER_PID=$!
 echo "Open this URL in your browser and log in:"
