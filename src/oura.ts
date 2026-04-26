@@ -16,6 +16,7 @@ function dateRange(startDate?: string, endDate?: string) {
 
 async function ouraget(token: string, path: string, params: URLSearchParams) {
   const qs = params.toString();
+  // v8 ignore next -- buildParams always adds start_date so qs is never empty in practice
   const url = `${OURA_BASE}${path}${qs ? "?" + qs : ""}`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },

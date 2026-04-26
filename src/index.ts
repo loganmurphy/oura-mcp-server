@@ -249,10 +249,11 @@ export async function handleMcp(
 
 class McpApiHandler extends WorkerEntrypoint<Env> {
   async fetch(request: Request): Promise<Response> {
+    // v8 ignore next 3 -- OAuthProvider handles CORS before reaching this handler
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS });
     }
-
+    // v8 ignore next -- OAuthProvider rejects non-POST /mcp before reaching this handler
     if (request.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
     const noCache = new URL(request.url).searchParams.has("no_cache");
     return handleMcp(request, this.env, this.ctx, OURA_TOOLS, "oura-mcp-server", noCache);

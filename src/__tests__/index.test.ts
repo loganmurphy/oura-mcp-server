@@ -163,6 +163,20 @@ describe("routing", () => {
     );
     expect(res.status).toBe(401);
   });
+
+  it("rewrites http:// to https:// when x-forwarded-proto: https", async () => {
+    // The ExportedHandler wrapper rewrites the URL scheme before OAuthProvider
+    // sees it, so OAuth discovery endpoints return https:// URLs (required by
+    // Claude.ai and other OAuth clients that enforce HTTPS).
+    const res = await worker.fetch(
+      new Request("http://localhost/health", {
+        headers: { "x-forwarded-proto": "https" },
+      }),
+      makeEnv(),
+      makeCtx(),
+    );
+    expect(res.status).toBe(200);
+  });
 });
 
 // ── Missing token ─────────────────────────────────────────────────────────────

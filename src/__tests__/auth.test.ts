@@ -104,6 +104,20 @@ describe("defaultHandler — POST /authorize", () => {
     expect(res.headers.get("Retry-After")).toBe("60");
   });
 
+  it("returns 400 when body cannot be parsed as form data", async () => {
+    const res = await defaultHandler.fetch(
+      new Request("http://localhost/authorize", {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: "not-form-data",
+      }),
+      makeEnv(),
+      makeCtx(),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Invalid form submission");
+  });
+
   it("returns 400 when oauth_params is missing", async () => {
     const res = await defaultHandler.fetch(
       new Request("http://localhost/authorize", {
