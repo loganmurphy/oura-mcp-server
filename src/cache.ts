@@ -1,7 +1,7 @@
 // Per-day rows let us serve partial cache hits and fetch only the missing dates.
 
 const TTL: Record<"today" | "yesterday" | "older", number> = {
-  today:     1  * 60 * 60 * 1000,  // 1h  — data still accumulating
+  today:     5  * 60 * 1000,        // 5m  — data still accumulating; Oura syncs every few min
   yesterday: 6  * 60 * 60 * 1000,  // 6h  — Oura may retroactively adjust
   older:     24 * 60 * 60 * 1000,  // 24h — stable historical data
 };

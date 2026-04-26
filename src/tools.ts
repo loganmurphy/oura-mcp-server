@@ -98,7 +98,9 @@ export const ACTIVITY_TOOLS: ToolDef[] = [
     description:
       "Get workout sessions including activity type, start/end time, calories burned, heart rate stats, and distance. " +
       "The `day` field uses the calendar date of the workout. " +
-      "end_date is inclusive — the server adds +1 day when calling the Oura API.",
+      "end_date is inclusive — the server adds +1 day when calling the Oura API. " +
+      "Note: Oura filters workouts by UTC datetime internally, so a late-evening workout (e.g. 10 PM in a UTC- timezone) " +
+      "may not appear until you query with tomorrow as end_date, since its UTC time crosses midnight.",
     inputSchema: {
       type: "object",
       properties: { ...DATE_RANGE_PROPS },
