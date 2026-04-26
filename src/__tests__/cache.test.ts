@@ -7,7 +7,6 @@ import {
   setCachedRange,
 } from "../cache";
 
-// ── D1 mock ───────────────────────────────────────────────────────────────────
 
 function createMockD1() {
   const rows = new Map<string, { data: string; fetched_at: number }>();
@@ -66,7 +65,6 @@ function createMockD1() {
   } as unknown as D1Database & { _rows: Map<string, { data: string; fetched_at: number }> };
 }
 
-// ── datesInRange ──────────────────────────────────────────────────────────────
 
 describe("datesInRange", () => {
   it("returns a single date when start equals end", () => {
@@ -91,7 +89,6 @@ describe("datesInRange", () => {
   });
 });
 
-// ── defaultStart / defaultEnd ─────────────────────────────────────────────────
 
 describe("defaultStart / defaultEnd", () => {
   it("defaultEnd returns today in YYYY-MM-DD format", () => {
@@ -105,7 +102,6 @@ describe("defaultStart / defaultEnd", () => {
   });
 });
 
-// ── getCachedRange / setCachedRange ───────────────────────────────────────────
 
 describe("getCachedRange", () => {
   it("returns all misses when the DB is empty", async () => {

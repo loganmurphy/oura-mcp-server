@@ -6,7 +6,6 @@
 import * as readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 
-// ── Colors / formatting ───────────────────────────────────────────────────────
 export const c = {
   dim:    (s: string) => `\x1b[2m${s}\x1b[0m`,
   bold:   (s: string) => `\x1b[1m${s}\x1b[0m`,
@@ -41,8 +40,6 @@ export function banner(title: string, lines: string[]) {
 export function step(n: number, title: string) {
   console.log(`\n${c.bold(c.cyan(`── Step ${n} ──`))}  ${c.bold(title)}`);
 }
-
-// ── Input helpers ────────────────────────────────────────────────────────────
 
 let rl: readline.Interface | null = null;
 

@@ -263,8 +263,6 @@ export const defaultHandler = {
 
     const url = new URL(request.url);
 
-    // ── OAuth authorization endpoint ─────────────────────────────────────────
-
     if (url.pathname === "/authorize") {
       if (request.method === "GET") {
         // Validate the OAuth request params; throw → 400.
@@ -342,8 +340,6 @@ export const defaultHandler = {
 
       return new Response("Method not allowed", { status: 405 });
     }
-
-    // ── Health check ─────────────────────────────────────────────────────────
 
     if (url.pathname === "/" || url.pathname === "/health") {
       return new Response(JSON.stringify({

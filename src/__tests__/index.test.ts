@@ -29,7 +29,6 @@ import { OURA_TOOLS } from "../tools";
 import type { Env } from "../index";
 import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 
-// ── Test helpers ──────────────────────────────────────────────────────────────
 
 function makeEnv(token = "test-token"): Env {
   return {
@@ -104,7 +103,6 @@ beforeEach(() => {
   vi.mocked(oura.getSleepSessions).mockResolvedValue({ data: [], next_token: null });
 });
 
-// ── Routing (via worker.fetch) ────────────────────────────────────────────────
 //
 // These tests exercise the OAuthProvider + defaultHandler routing layer.
 // OAUTH_KV is never touched for OPTIONS, /health, /, or /unknown requests.
@@ -179,7 +177,6 @@ describe("routing", () => {
   });
 });
 
-// ── Missing token ─────────────────────────────────────────────────────────────
 
 describe("missing OURA_API_TOKEN", () => {
   it("returns 500 with actionable error", async () => {
@@ -190,7 +187,6 @@ describe("missing OURA_API_TOKEN", () => {
   });
 });
 
-// ── JSON-RPC methods ──────────────────────────────────────────────────────────
 
 describe("initialize", () => {
   it("returns protocol version and capabilities", async () => {
@@ -247,7 +243,6 @@ describe("malformed JSON", () => {
   });
 });
 
-// ── tools/call — date-range tool (oura_daily_sleep) ──────────────────────────
 
 describe("tools/call — date-range tool (oura_daily_sleep)", () => {
   it("returns _cache: hit on full cache hit", async () => {
@@ -286,7 +281,6 @@ describe("tools/call — date-range tool (oura_daily_sleep)", () => {
   });
 });
 
-// ── tools/call — forceSkipCache (no_cache) ───────────────────────────────────
 
 describe("tools/call — forceSkipCache flag", () => {
   it("bypasses cache when forceSkipCache is true", async () => {
@@ -306,7 +300,6 @@ describe("tools/call — forceSkipCache flag", () => {
   });
 });
 
-// ── tools/call — all other date-range tools route through fetchFromOura ───────
 
 describe("tools/call — all other date-range tools route through fetchFromOura", () => {
   const dateRangeTools = [
@@ -329,7 +322,6 @@ describe("tools/call — all other date-range tools route through fetchFromOura"
   }
 });
 
-// ── tools/call — exclusiveEnd: +1 day added for non-daily_sleep tools ─────────
 //
 // handleDateRangeTool passes `missEnd` (last element of cache.misses) to
 // fetchFromOura, not the original tool arg. The CACHE_MISS mock has
@@ -366,7 +358,6 @@ describe("tools/call — exclusiveEnd behavior", () => {
   });
 });
 
-// ── tools/call — groupByDay merges multiple items per day ─────────────────────
 
 describe("tools/call — groupByDay merges multiple items per day", () => {
   it("returns all items when sleep_sessions has 3 entries on the same day", async () => {
@@ -388,7 +379,6 @@ describe("tools/call — groupByDay merges multiple items per day", () => {
   });
 });
 
-// ── tools/call — unknown tool ─────────────────────────────────────────────────
 
 describe("tools/call — unknown tool", () => {
   it("returns isError: true", async () => {

@@ -9,15 +9,11 @@ vi.mock("node:child_process", () => ({ spawnSync: vi.fn(() => ({ status: 0 })) }
 import { spawnSync } from "node:child_process";
 const mockSpawn = vi.mocked(spawnSync);
 
-// ── Platform helpers ──────────────────────────────────────────────────────────
-
 function withPlatform(platform: NodeJS.Platform, fn: () => void): void {
   const desc = Object.getOwnPropertyDescriptor(process, "platform")!;
   Object.defineProperty(process, "platform", { value: platform, configurable: true });
   try { fn(); } finally { Object.defineProperty(process, "platform", desc); }
 }
-
-// ── loadDevVars / saveDevVars ─────────────────────────────────────────────────
 
 describe("loadDevVars", () => {
   let tmpFile: string;
@@ -84,8 +80,6 @@ describe("saveDevVars", () => {
   });
 });
 
-// ── openBrowser ───────────────────────────────────────────────────────────────
-
 describe("openBrowser", () => {
   beforeEach(() => mockSpawn.mockClear());
 
@@ -104,8 +98,6 @@ describe("openBrowser", () => {
     expect(mockSpawn).toHaveBeenCalledWith("xdg-open", ["https://example.com"], { stdio: "ignore" });
   });
 });
-
-// ── copyToClipboard ───────────────────────────────────────────────────────────
 
 describe("copyToClipboard", () => {
   beforeEach(() => mockSpawn.mockClear());

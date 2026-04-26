@@ -23,8 +23,6 @@ const WRANGLER_JSONC_PATH   = path.resolve(process.cwd(), "wrangler.jsonc");
 const WRANGLER_EXAMPLE_PATH = path.resolve(process.cwd(), "wrangler.example.jsonc");
 const SCHEMA_PATH           = path.resolve(process.cwd(), "migrations/001_init.sql");
 
-// ── Cloudflare auth + account selection via wrangler CLI ─────────────────────
-//
 // All Cloudflare operations go through wrangler — no separate SDK client.
 // `wrangler login` handles the OAuth browser flow and caches credentials.
 // We run `wrangler whoami` to verify auth and parse the account table for IDs.
@@ -106,8 +104,6 @@ async function pickAccount(
   saveDevVars(BOOTSTRAP_STATE_PATH, { CLOUDFLARE_ACCOUNT_ID: selected.id });
   return { accountId: selected.id, accountName: selected.name };
 }
-
-// ── Resources ─────────────────────────────────────────────────────────────────
 
 function ensureD1(accountId: string): string {
   step(4, "D1 cache database");
@@ -194,8 +190,6 @@ function applyD1Schema(accountId: string): void {
   ok("Schema applied");
 }
 
-// ── Secrets ───────────────────────────────────────────────────────────────────
-
 async function ensureOuraToken(): Promise<string> {
   step(8, "Oura Personal Access Token");
 
@@ -246,8 +240,6 @@ async function promptMcpPassword(): Promise<string> {
   return password;
 }
 
-// ── Deployment ────────────────────────────────────────────────────────────────
-
 function deployWorker(accountId: string): string {
   step(10, "Deploy Worker to Cloudflare");
 
@@ -290,8 +282,6 @@ function setWorkerSecrets(
     ok(`Secret ${c.cyan(name)} set`);
   }
 }
-
-// ── Main ──────────────────────────────────────────────────────────────────────
 
 // Readline keeps the event loop alive; ensure Ctrl+C exits even if wrangler's
 // OAuth callback server is running in the background during `wrangler login`.

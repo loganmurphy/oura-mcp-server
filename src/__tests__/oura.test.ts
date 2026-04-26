@@ -21,7 +21,6 @@ beforeEach(() => {
   vi.restoreAllMocks();
 });
 
-// ── Auth errors ───────────────────────────────────────────────────────────────
 
 describe("auth errors", () => {
   it("throws with PAT rotation message on 401", async () => {
@@ -40,7 +39,6 @@ describe("auth errors", () => {
   });
 });
 
-// ── Correct URLs & auth header ────────────────────────────────────────────────
 
 describe("getDailySleep", () => {
   it("includes start_date and end_date when provided", async () => {
@@ -109,7 +107,6 @@ describe("getDailyStress", () => {
   });
 });
 
-// ── Noise stripping — getDailyActivity ───────────────────────────────────────
 
 describe("getDailyActivity — noise stripping", () => {
   it("removes met and class_5_min from each item", async () => {
@@ -144,7 +141,6 @@ describe("getDailyActivity — noise stripping", () => {
   });
 });
 
-// ── Noise stripping — getSleepSessions ───────────────────────────────────────
 
 describe("getSleepSessions — noise stripping", () => {
   it("removes sleep_phase_5_min, sleep_phase_30_sec, app_sleep_phase_5_min, movement_30_sec", async () => {

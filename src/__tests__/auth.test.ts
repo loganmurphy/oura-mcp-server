@@ -4,7 +4,6 @@ import { defaultHandler } from "../index";
 import { escapeHtml } from "../ui";
 import type { Env } from "../index";
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function makeCtx(): ExecutionContext {
   return { waitUntil: vi.fn(), passThroughOnException: vi.fn(), props: {} };
@@ -40,7 +39,6 @@ function formBody(fields: Record<string, string>): BodyInit {
   return fd;
 }
 
-// ── escapeHtml ────────────────────────────────────────────────────────────────
 
 describe("escapeHtml", () => {
   it("escapes &, \", <, >", () => {
@@ -51,7 +49,6 @@ describe("escapeHtml", () => {
   });
 });
 
-// ── defaultHandler routing ────────────────────────────────────────────────────
 
 describe("defaultHandler — OPTIONS", () => {
   it("returns 204 with CORS headers", async () => {
