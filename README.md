@@ -130,14 +130,24 @@ CLIENT_ID=$(echo $CLIENT | jq -r .client_id)
 CODE_VERIFIER=$(openssl rand -base64 32 | tr -d '=+/' | cut -c1-43)
 CODE_CHALLENGE=$(printf '%s' "$CODE_VERIFIER" | openssl dgst -sha256 -binary | base64 | tr '+/' '-_' | tr -d '=')
 
-# 3. Open in browser, enter password, copy the code= from the redirect URL
+# 3. Start a local listener to capture the auth code, then open the URL in your browser.
+#    The success page fires a hidden iframe to localhost:9999 — the listener catches it.
+#    After logging in, the listener prints a GET request line containing code=XXXX.
+#    Stop it with Ctrl-C, then set AUTH_CODE to that value.
+python3 -m http.server 9999 &
+LISTENER_PID=$!
 echo "$BASE/authorize?client_id=$CLIENT_ID&response_type=code&redirect_uri=http://localhost:9999/callback&code_challenge=$CODE_CHALLENGE&code_challenge_method=S256&state=test"
-read -r AUTH_CODE
+# Open the URL above in your browser and log in. Watch for a line like:
+#   "GET /callback?code=XXXX&state=test HTTP/1.1"
+# Then:
+kill $LISTENER_PID 2>/dev/null
+echo -n "Paste the code value from the GET line above: " && read -r AUTH_CODE
 
 # 4. Exchange code for token
 TOKEN=$(curl -s -X POST $BASE/oauth/token -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=authorization_code&code=$AUTH_CODE&redirect_uri=http://localhost:9999/callback&client_id=$CLIENT_ID&code_verifier=$CODE_VERIFIER" \
   | jq -r .access_token)
+echo "Token: $TOKEN"
 
 # 5. Call a tool
 curl -s -X POST $BASE/mcp -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
@@ -179,12 +189,18 @@ All date params optional, default to last 7 days (YYYY-MM-DD). `end_date` is alw
 
 All tools accept `start_date`, `end_date`, and `skip_cache` (bool).
 
+> **Third-party integrations (e.g. Strava)** — workouts synced to Oura from external apps do not always appear in the Oura API. If you're missing workouts from a connected service, that's an upstream sync limitation, not a server issue. A dedicated Strava MCP server is coming soon.
+
 **`day` field convention:**
 
 - Sleep, readiness, SpO2 → **wake-up date** (session ending morning of Apr 24 → `day: "2026-04-24"`)
 - Activity, workouts, stress → **calendar date**
 
 ---
+
+## Integrations
+
+Note: Third-party integrations like Strava do not flow through the Oura API and are not available via this MCP server. Keep this in mind when expecting data from connected services.
 
 ## Troubleshooting
 
