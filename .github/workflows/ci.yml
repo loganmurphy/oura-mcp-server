@@ -30,7 +30,9 @@ jobs:
         run: pnpm lint
 
       - name: Generate Worker types
-        run: cp wrangler.example.jsonc wrangler.jsonc && npx wrangler types
+        run: cp wrangler.example.jsonc wrangler.jsonc && pnpm cf-typegen
+        env:
+          WRANGLER_SEND_METRICS: "false"
 
       - name: Typecheck worker
         run: npx tsc --noEmit
