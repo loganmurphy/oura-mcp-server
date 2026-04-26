@@ -104,7 +104,7 @@ Use the ngrok URL in place of the Cloudflare Worker URL when testing Claude.ai w
 
 `handleDateRangeTool`:
 1. Enumerates all dates in the requested range via `datesInRange()`
-2. Queries D1 for cached rows — TTL is **1h today / 6h yesterday / 24h older**
+2. Queries D1 for cached rows — TTL is **5m today / 6h yesterday / 24h older**
 3. **Full cache hit** → returns JSON immediately
 4. **Partial/no cache** → fetches only the missing date sub-range from Oura, merges with cache hits, returns JSON, caches new items via `ctx.waitUntil()` (non-blocking)
 
@@ -133,3 +133,4 @@ All endpoints are under `https://api.ouraring.com/v2/usercollection/`. Date-rang
 - Activity/workouts/stress use the **calendar date** for the `day` field.
 - `oura_daily_sleep` `end_date` is **inclusive** (Oura API exception).
 - **All other endpoints** treat `end_date` as **exclusive** — querying through Apr 24 requires sending `end_date: "2026-04-25"` to the API. The Worker handles this transparently via `exclusiveEnd()` / `addOneDay()` in `fetchFromOura`, so all tool callers use the same inclusive `end_date` convention.
+- **`oura_workouts` timezone quirk** — Oura's workout endpoint filters by UTC datetime internally, but the `day` field uses local time. A late-evening workout in a UTC- timezone has a UTC start that crosses into the next day; querying with that day's `end_date` may miss it. The tool description notes this so the LLM can advise users to extend `end_date` by a day if late-day workouts seem missing.

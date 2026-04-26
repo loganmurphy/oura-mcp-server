@@ -143,24 +143,24 @@ describe("getCachedRange", () => {
     expect(result.misses).toEqual(["2026-01-01"]);
   });
 
-  it("returns a hit for a fresh today row (1h TTL)", async () => {
+  it("returns a hit for a fresh today row (5m TTL)", async () => {
     const db = createMockD1();
     const today = new Date().toISOString().slice(0, 10);
     db._rows.set(`daily_sleep::${today}`, {
       data: JSON.stringify({ score: 88 }),
-      fetched_at: Date.now() - 30 * 60 * 1000, // 30min ago — within 1h TTL
+      fetched_at: Date.now() - 2 * 60 * 1000, // 2min ago — within 5m TTL
     });
     const result = await getCachedRange(db, "daily_sleep", [today]);
     expect(result.hits.size).toBe(1);
     expect(result.misses).toEqual([]);
   });
 
-  it("treats a stale today row as a miss (1h TTL exceeded)", async () => {
+  it("treats a stale today row as a miss (5m TTL exceeded)", async () => {
     const db = createMockD1();
     const today = new Date().toISOString().slice(0, 10);
     db._rows.set(`daily_sleep::${today}`, {
       data: JSON.stringify({ score: 70 }),
-      fetched_at: Date.now() - 2 * 60 * 60 * 1000, // 2h ago — past 1h TTL
+      fetched_at: Date.now() - 6 * 60 * 1000, // 6min ago — past 5m TTL
     });
     const result = await getCachedRange(db, "daily_sleep", [today]);
     expect(result.hits.size).toBe(0);

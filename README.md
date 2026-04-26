@@ -6,16 +6,16 @@
 
 A lightweight [Model Context Protocol](https://modelcontextprotocol.io) server that exposes your [Oura Ring](https://ouraring.com) data as tools for Claude. Runs on Cloudflare Workers with a D1 cache layer for fast repeated queries.
 
-Works with **Claude Desktop, Claude.ai (web), and Claude mobile** — any MCP client that supports OAuth 2.1 remote servers.
+Tested with **Claude.ai (web), Claude Desktop, and Claude mobile** via `claude.ai/settings/connectors`. Any MCP client that supports OAuth 2.1 remote servers should work — though only Claude is officially tested and the bootstrap wizard targets Claude exclusively.
 
 ## Architecture
 
 ```
-Claude Desktop / Claude.ai / Claude mobile
+Claude (web / desktop / mobile)
      │  OAuth 2.1 (PKCE)
 Cloudflare Worker  (@cloudflare/workers-oauth-provider)
      ├─ KV       OAuth tokens (30-day access, non-expiring refresh)
-     ├─ D1       per-day cache (1h today / 6h yesterday / 24h older)
+     ├─ D1       per-day cache (5m today / 6h yesterday / 24h older)
      └─ Oura API fetched only on cache miss
 ```
 
@@ -56,7 +56,7 @@ Run `pnpm bootstrap` when ready to deploy.
 
 ---
 
-## Connect to Claude
+## Connect
 
 All clients connect to the same MCP endpoint. `pnpm bootstrap` copies this URL to your clipboard on completion:
 
@@ -64,32 +64,11 @@ All clients connect to the same MCP endpoint. `pnpm bootstrap` copies this URL t
 https://oura-mcp-server.<your-subdomain>.workers.dev/mcp
 ```
 
-### Claude.ai (web) and Claude mobile
-
 Settings → Integrations → [Custom Connectors](https://claude.ai/settings/connectors) → Add custom connector → paste URL → Connect → enter password → Authorize.
 
 After connecting, click **Configure** on the Oura connector and set each tool to **Allow** — otherwise Claude may ask for permission on every use.
 
 `pnpm bootstrap` and `pnpm connect-local` (with ngrok) open this page and copy the URL automatically.
-
-### Claude Desktop
-
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "oura": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "https://oura-mcp-server.<your-subdomain>.workers.dev/mcp"]
-    }
-  }
-}
-```
-
-Fully quit Claude Desktop (Cmd+Q) and relaunch. A browser window opens on first connection — enter your password and click Authorize.
-
-For local dev use `http://localhost:8787/mcp` (no ngrok needed — Claude Desktop can reach localhost directly).
 
 ---
 
@@ -206,13 +185,13 @@ All tools accept `start_date`, `end_date`, and `skip_cache` (bool).
 
 ## Troubleshooting
 
-**Tools not appearing in Claude Desktop** — fully quit (Cmd+Q) and relaunch; tool list loads at startup only.
+**Tools not appearing** — remove and re-add the connector at `claude.ai/settings/connectors`; tool list refreshes on reconnect.
 
-**OAuth popup doesn't close (Claude.ai web)** — the success page uses a hidden iframe to complete the exchange; wait ~5s then close manually, the token is stored.
+**OAuth popup doesn't close** — the success page uses a hidden iframe to complete the exchange; wait ~5s then close manually, the token is stored.
 
 **`OURA_API_TOKEN` not configured** — local: check `.dev.vars` and restart `pnpm dev`; production: `npx wrangler secret put OURA_API_TOKEN`.
 
-**MCP server disconnected** — check `pnpm dev` is running; `curl localhost:8787/health`; clear mcp-remote cache: `rm -rf ~/.mcp-remote`.
+**MCP server disconnected** — check `pnpm dev` is running; `curl localhost:8787/health`.
 
 **Today's data empty** — open the Oura app to trigger a sync, then ask Claude to use `skip_cache: true`.
 

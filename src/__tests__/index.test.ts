@@ -353,7 +353,7 @@ describe("tools/call — exclusiveEnd behavior", () => {
   it("adds +1 day to end_date for oura_workouts (exclusive endpoint)", async () => {
     vi.mocked(oura.getWorkouts).mockResolvedValueOnce({ data: [] });
     await post("/mcp", jsonRpc("tools/call", { name: "oura_workouts", arguments: {} }));
-    // missEnd = "2026-04-17" → exclusiveEnd adds 1 day → "2026-04-18"
+    // missStart = "2026-04-15", missEnd = "2026-04-17" → exclusiveEnd adds 1 day → "2026-04-18"
     expect(oura.getWorkouts).toHaveBeenCalledWith("test-token", "2026-04-15", "2026-04-18");
   });
 });
