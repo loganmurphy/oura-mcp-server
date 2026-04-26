@@ -277,7 +277,7 @@ async function deployWorker(accountId: string): Promise<string> {
     // Wrangler exits with this message rather than prompting interactively.
     if (attempt === 1 && output.includes("workers.dev subdomain")) {
       warn("Your Cloudflare account needs a workers.dev subdomain — required for first deploy.");
-      console.log(`  ${c.dim("A browser will open to Workers & Pages. Click 'Get started' and choose a subdomain.")}`);
+      console.log(`  ${c.dim("Cloudflare auto-populates a subdomain — accept it or change it, then click Save.")}`);
       openBrowser(`https://dash.cloudflare.com/${accountId}/workers`);
       await pressEnter("Press Enter once your subdomain is registered...");
       continue;
