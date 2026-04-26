@@ -1,7 +1,4 @@
-// Auth UI HTML templates.
-// These are pure string templates with no meaningful logic — excluded from
-// coverage thresholds (see vitest.config.ts). The only logic is escapeHtml,
-// which is tested via auth.test.ts.
+// OAuth login and success page templates.
 
 export function escapeHtml(str: string): string {
   return str

@@ -242,11 +242,7 @@ export async function handleMcp(
   }
 }
 
-// ── MCP API handler (authenticated) ──────────────────────────────────────────
-//
-// OAuthProvider forwards /mcp/* requests here only after verifying a valid
-// Bearer token. `this.env` and `this.ctx` are the standard Worker bindings.
-
+// Receives authenticated /mcp requests from OAuthProvider (Bearer token verified).
 class McpApiHandler extends WorkerEntrypoint<Env> {
   async fetch(request: Request): Promise<Response> {
     // v8 ignore next 3 -- OAuthProvider handles CORS before reaching this handler
@@ -260,11 +256,7 @@ class McpApiHandler extends WorkerEntrypoint<Env> {
   }
 }
 
-// ── Default handler (auth UI + health) ───────────────────────────────────────
-//
-// Receives all requests that aren't matched by apiRoute (/mcp/*), including
-// the /authorize login page, OAuth metadata endpoints, and health checks.
-
+// Handles /authorize, health checks, and anything else not matched by /mcp.
 export const defaultHandler = {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     if (request.method === "OPTIONS") {
@@ -277,24 +269,19 @@ export const defaultHandler = {
 
     if (url.pathname === "/authorize") {
       if (request.method === "GET") {
-        let oauthReq;
+        // Validate the OAuth request params; throw → 400.
+        // Raw query string is embedded in the form so POST can reconstruct it.
         try {
-          oauthReq = await env.OAUTH_PROVIDER.parseAuthRequest(request);
+          await env.OAUTH_PROVIDER.parseAuthRequest(request);
         } catch {
           return new Response("Invalid authorization request", { status: 400 });
         }
-        // Embed the raw query string so POST can reconstruct the OAuth request
-        void oauthReq; // parsed only to validate; raw params carry the state
         return new Response(renderLoginPage(url.search, false), {
           headers: { "Content-Type": "text/html; charset=utf-8" },
         });
       }
 
       if (request.method === "POST") {
-        // Rate-limit by IP — 10 attempts / 60 s (configured in wrangler.jsonc).
-        // CF-Connecting-IP is injected by the CF edge; falls back to "global"
-        // in local dev. The binding may be undefined in older Miniflare versions
-        // that don't yet support the rate_limiting binding type — skip gracefully.
         const ip = request.headers.get("CF-Connecting-IP") ?? "global";
         const { success } = env.RATE_LIMITER
           ? await env.RATE_LIMITER.limit({ key: ip })
@@ -373,8 +360,6 @@ export const defaultHandler = {
   },
 };
 
-// ── Worker entry point ────────────────────────────────────────────────────────
-
 const oauthProvider = new OAuthProvider<Env>({
   apiRoute:                    "/mcp",
   apiHandler:                  McpApiHandler,
@@ -387,11 +372,10 @@ const oauthProvider = new OAuthProvider<Env>({
   // Refresh tokens never expire — re-auth only needed if explicitly revoked
 });
 
-// Honor X-Forwarded-Proto from reverse proxies and tunnels (e.g. ngrok, Cloudflare).
-// OAuthProvider derives all discovery/issuer URLs from request.url, so if the
-// incoming request shows http:// but the proxy header says https, rewrite it
-// before the provider sees it — otherwise the discovery document advertises http://
-// endpoints and OAuth clients (Claude.ai, mcp-remote) reject the connection.
+// Rewrite http:// → https:// when X-Forwarded-Proto: https is set.
+// OAuthProvider builds discovery/issuer URLs from request.url; without this,
+// ngrok and similar proxies cause the discovery document to advertise http://
+// endpoints, which OAuth clients reject.
 export default {
   fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (

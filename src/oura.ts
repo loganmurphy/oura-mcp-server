@@ -3,14 +3,13 @@ const OURA_BASE = "https://api.ouraring.com";
 type OuraItem = Record<string, unknown>;
 
 function dateRange(startDate?: string, endDate?: string) {
-  const params = new URLSearchParams();
-  if (startDate) params.set("start_date", startDate);
-  if (endDate) params.set("end_date", endDate);
   if (!startDate) {
     const d = new Date();
     d.setDate(d.getDate() - 7);
-    params.set("start_date", d.toISOString().slice(0, 10));
+    startDate = d.toISOString().slice(0, 10);
   }
+  const params = new URLSearchParams({ start_date: startDate });
+  if (endDate) params.set("end_date", endDate);
   return params;
 }
 
