@@ -2,7 +2,10 @@ import OAuthProvider, { type OAuthHelpers } from "@cloudflare/workers-oauth-prov
 import { WorkerEntrypoint } from "cloudflare:workers"
 import {
   getDailyActivity,
+  getDailyCycleInsights,
+  getDailyPerimenopauseHealth,
   getDailyReadiness,
+  getDailyReproductiveHealth,
   getDailySleep,
   getDailySpo2,
   getDailyStress,
@@ -10,7 +13,7 @@ import {
   getWorkouts,
 } from "./oura"
 import { datesInRange, defaultEnd, defaultStart, getCachedRange, setCachedRange } from "./cache"
-import { OURA_TOOLS, type ToolDef } from "./tools"
+import { OURA_TOOLS, WOMENS_HEALTH_TOOLS, type ToolDef } from "./tools"
 import { renderLoginPage, renderSuccessPage } from "./ui"
 
 export interface Env extends Cloudflare.Env {
@@ -93,6 +96,12 @@ async function fetchFromOura(
       return getWorkouts(token, d.start_date, exclusiveEnd(d.end_date))
     case "oura_daily_stress":
       return getDailyStress(token, d.start_date, exclusiveEnd(d.end_date))
+    case "oura_cycle_insights":
+      return getDailyCycleInsights(token, d.start_date, exclusiveEnd(d.end_date))
+    case "oura_reproductive_health":
+      return getDailyReproductiveHealth(token, d.start_date, exclusiveEnd(d.end_date))
+    case "oura_perimenopause_health":
+      return getDailyPerimenopauseHealth(token, d.start_date, exclusiveEnd(d.end_date))
     // v8 ignore next -- defensive dead code: DATE_KEYED_TOOLS guard prevents reaching here
     default:
       throw new Error(`Unknown tool: ${name}`)
@@ -108,6 +117,9 @@ const DATE_KEYED_TOOLS = new Set([
   "oura_daily_spo2",
   "oura_workouts",
   "oura_daily_stress",
+  "oura_cycle_insights",
+  "oura_reproductive_health",
+  "oura_perimenopause_health",
 ])
 
 // Some endpoints return multiple items per day (e.g. nap + main sleep);
@@ -281,7 +293,11 @@ class McpApiHandler extends WorkerEntrypoint<Env> {
     // v8 ignore next -- OAuthProvider rejects non-POST /mcp before reaching this handler
     if (request.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405)
     const noCache = new URL(request.url).searchParams.has("no_cache")
-    return handleMcp(request, this.env, this.ctx, OURA_TOOLS, "oura-mcp-server", noCache)
+    const tools =
+      this.env.ENABLE_WOMENS_HEALTH === "true"
+        ? [...OURA_TOOLS, ...WOMENS_HEALTH_TOOLS]
+        : OURA_TOOLS
+    return handleMcp(request, this.env, this.ctx, tools, "oura-mcp-server", noCache)
   }
 }
 

@@ -19,7 +19,7 @@ Cloudflare Worker  (@cloudflare/workers-oauth-provider)
      └─ Oura API fetched only on cache miss
 ```
 
-All 7 tools share a single `/mcp` endpoint and one OAuth login. On a partial cache hit the worker fetches only the missing date range and merges it with cached data. Empty responses are never cached (ring not yet synced).
+All tools share a single `/mcp` endpoint and one OAuth login. On a partial cache hit the worker fetches only the missing date range and merges it with cached data. Empty responses are never cached (ring not yet synced).
 
 ## Requirements
 
@@ -183,6 +183,28 @@ All tools accept `start_date`, `end_date`, and `skip_cache` (bool).
 
 - Sleep, readiness, SpO2 → **wake-up date** (session ending morning of Apr 24 → `day: "2026-04-24"`)
 - Activity, workouts, stress → **calendar date**
+
+### Women's health tools (opt-in)
+
+Three additional tools are available for Oura accounts with cycle tracking, reproductive health, or perimenopause features enabled. They are off by default.
+
+| Tool                        | Returns                                             |
+| --------------------------- | --------------------------------------------------- |
+| `oura_cycle_insights`       | Cycle phase, predicted period start, fertile window |
+| `oura_reproductive_health`  | Basal body temperature deviation, cycle metrics     |
+| `oura_perimenopause_health` | Vasomotor symptoms, sleep disruption patterns       |
+
+**Enable via `pnpm bootstrap`** — the wizard prompts during setup. To enable manually:
+
+```bash
+# Production (Cloudflare Worker)
+npx wrangler secret put ENABLE_WOMENS_HEALTH   # enter: true
+
+# Local dev — add to .dev.vars
+echo "ENABLE_WOMENS_HEALTH=true" >> .dev.vars
+```
+
+> These tools return empty data if the corresponding feature isn't active in the Oura app.
 
 ---
 

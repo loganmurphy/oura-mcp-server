@@ -55,4 +55,9 @@
   // OURA_API_TOKEN and MCP_AUTH_PASSWORD are set via: wrangler secret put <NAME>
   // To bypass the cache per request, append ?no_cache to the endpoint URL
   // or pass `skip_cache: true` on any tool call.
+
+  // Optional: enable women's health tools (cycle insights, reproductive health,
+  // perimenopause). Requires the relevant features to be active on the Oura account.
+  // Uncomment to opt in, then redeploy with `wrangler deploy`.
+  // "vars": { "ENABLE_WOMENS_HEALTH": "true" }
 }
