@@ -293,6 +293,10 @@ function setWorkerSecrets(
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+// Readline keeps the event loop alive; ensure Ctrl+C exits even if wrangler's
+// OAuth callback server is running in the background during `wrangler login`.
+process.on("SIGINT", () => { closePrompts(); process.exit(130); });
+
 async function main(): Promise<void> {
   banner("oura-mcp-server — Bootstrap", [
     "This will set up everything needed to chat with",

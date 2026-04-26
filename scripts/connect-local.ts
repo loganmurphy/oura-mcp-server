@@ -1,14 +1,25 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 
-import { banner, c, ok, warn, info, closePrompts, pressEnter, promptHidden } from "./prompts";
+import { banner, c, ok, warn, info, closePrompts, promptHidden } from "./prompts";
 import { copyToClipboard, loadDevVars, openBrowser, saveDevVars } from "./utils";
 
 const DEV_VARS_PATH       = path.resolve(process.cwd(), ".dev.vars");
 const WRANGLER_JSONC_PATH = path.resolve(process.cwd(), "wrangler.jsonc");
 const SCHEMA_PATH         = path.resolve(process.cwd(), "migrations/001_init.sql");
 const OURA_PAT_URL        = "https://cloud.ouraring.com/personal-access-tokens";
+
+const children: ChildProcess[] = [];
+
+function cleanup() {
+  for (const child of children) {
+    try { child.kill("SIGTERM"); } catch { /* already gone */ }
+  }
+}
+
+process.on("SIGINT",  () => { cleanup(); process.exit(0); });
+process.on("SIGTERM", () => { cleanup(); process.exit(0); });
 
 function isNgrokInstalled(): boolean {
   return spawnSync("ngrok", ["version"], { stdio: "ignore" }).status === 0;
@@ -25,13 +36,32 @@ async function getNgrokUrl(): Promise<string | null> {
   }
 }
 
+async function isDevServerRunning(): Promise<boolean> {
+  try {
+    const res = await fetch("http://localhost:8787/health", {
+      signal: AbortSignal.timeout(1000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForNgrokUrl(timeoutMs: number): Promise<string | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const url = await getNgrokUrl();
+    if (url) return url;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return null;
+}
+
 async function main() {
   banner("oura-mcp-server — Local setup", [
     "Sets up local credentials and D1 schema.",
     "No Cloudflare account needed — just keep `pnpm dev` running.",
   ]);
-
-  // ── Secrets ──────────────────────────────────────────────────────────────────
 
   const vars = loadDevVars(DEV_VARS_PATH);
 
@@ -56,8 +86,6 @@ async function main() {
   } else {
     ok("MCP_AUTH_PASSWORD already in .dev.vars");
   }
-
-  // ── wrangler.jsonc ────────────────────────────────────────────────────────────
 
   if (!fs.existsSync(WRANGLER_JSONC_PATH)) {
     const example = path.resolve(process.cwd(), "wrangler.example.jsonc");
@@ -84,8 +112,6 @@ async function main() {
     }
   }
 
-  // ── Worker types ──────────────────────────────────────────────────────────────
-
   info("Regenerating Worker types...");
   const typegen = spawnSync("npx", ["wrangler", "types"], {
     stdio: ["ignore", "inherit", "inherit"],
@@ -93,8 +119,6 @@ async function main() {
   });
   if (typegen.status !== 0) warn("Type generation failed — run `pnpm cf-typegen` manually");
   else ok("worker-configuration.d.ts updated");
-
-  // ── Local D1 schema ───────────────────────────────────────────────────────────
 
   info("Applying schema to local D1...");
   const migration = spawnSync(
@@ -107,41 +131,69 @@ async function main() {
     ok("Local D1 schema ready");
   }
 
-  // ── Connect to Claude ─────────────────────────────────────────────────────────
-
   console.log();
-  if (isNgrokInstalled()) {
-    info("ngrok detected.");
-    console.log(`  Start ${c.cyan("pnpm dev")} and ${c.cyan("ngrok http 8787")} in two other terminals.`);
-    await pressEnter("Press Enter once both are running...");
 
-    const tunnelUrl = await getNgrokUrl();
-    if (tunnelUrl) {
-      const mcpUrl = `${tunnelUrl}/mcp`;
-      const clipped = copyToClipboard(mcpUrl);
-      openBrowser("https://claude.ai/settings/connectors");
-      console.log();
-      ok(`Tunnel live: ${c.cyan(mcpUrl)}`);
-      if (clipped) ok("MCP URL copied to clipboard — paste it into Add custom connector.");
-      else info(`MCP URL: ${c.cyan(mcpUrl)}`);
-      console.log(`  ${c.dim("Browser opened to claude.ai/settings/connectors.")}`);
-    } else {
-      warn("Could not reach ngrok API (http://127.0.0.1:4040). Is ngrok running?");
-      console.log(`  Start ${c.cyan("ngrok http 8787")}, then add your tunnel URL at ${c.cyan("https://claude.ai/settings/connectors")}`);
-    }
-  } else {
+  if (!isNgrokInstalled()) {
     console.log(`  ${c.bold("To connect Claude, you'll need an HTTPS tunnel.")} ngrok is the easiest option.`);
     console.log(`  See the ${c.cyan("Local development")} section of the README for setup instructions.`);
+    console.log();
+    console.log(`  ${c.dim("Run `pnpm bootstrap` when you're ready to deploy to Cloudflare.")}`);
+    return;
   }
 
+  if (await isDevServerRunning()) {
+    ok("Dev server already running on :8787");
+  } else {
+    info("Starting pnpm dev...");
+    const dev = spawn("pnpm", ["dev"], { stdio: "ignore" });
+    children.push(dev);
+    dev.on("exit", (code) => {
+      if (code !== null && code !== 0) {
+        warn("pnpm dev stopped — port 8787 may be in use, or check your .dev.vars");
+      }
+    });
+    ok("Dev server started");
+  }
+
+  const existingTunnel = await getNgrokUrl();
+  if (existingTunnel) {
+    ok(`Using existing ngrok tunnel: ${c.cyan(existingTunnel)}`);
+  } else {
+    info("Starting ngrok tunnel...");
+    const ng = spawn("ngrok", ["http", "8787"], { stdio: "ignore" });
+    children.push(ng);
+  }
+
+  process.stdout.write(`  ${c.dim("•")} ${c.dim("Waiting for tunnel")}`);
+  const tunnelUrl = existingTunnel ?? await waitForNgrokUrl(30_000);
+  if (!existingTunnel) process.stdout.write("\n");
+
+  if (!tunnelUrl) {
+    warn("Timed out waiting for ngrok — run `ngrok http 8787` in another terminal.");
+    console.log(`  Then add the MCP URL at ${c.cyan("https://claude.ai/settings/connectors")}`);
+    return;
+  }
+
+  const mcpUrl = `${tunnelUrl}/mcp`;
+  const clipped = copyToClipboard(mcpUrl);
+  openBrowser("https://claude.ai/settings/connectors");
+
   console.log();
-  console.log(`  ${c.dim("Run `pnpm bootstrap` when you're ready to deploy to Cloudflare.")}`);
+  ok(`Tunnel live: ${c.cyan(mcpUrl)}`);
+  if (clipped) ok("MCP URL copied to clipboard — paste it into Add custom connector.");
+  else info(`MCP URL: ${c.cyan(mcpUrl)}`);
+  console.log(`  ${c.dim("Browser opened to claude.ai/settings/connectors.")}`);
+  console.log();
+  console.log(`  ${c.dim("Press Ctrl+C to stop the dev server and tunnel.")}`);
+
+  await new Promise<never>(() => {}); // wait for SIGINT
 }
 
 main()
   .catch((err: unknown) => {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`\n${c.red("✗")} ${msg}`);
+    cleanup();
     process.exit(1);
   })
   .finally(() => closePrompts());
