@@ -1,3 +1,4 @@
+import * as fs from "node:fs"
 import * as path from "node:path"
 import { spawnSync } from "node:child_process"
 
@@ -5,6 +6,27 @@ import { banner, c, confirm, closePrompts, info, ok, warn } from "./prompts"
 import { loadDevVars } from "./utils"
 
 const BOOTSTRAP_STATE_PATH = path.resolve(process.cwd(), ".bootstrap-state")
+const LOCAL_KV_DIR = path.resolve(
+  process.cwd(),
+  ".wrangler/state/v3/kv/miniflare-KVNamespaceObject",
+)
+
+async function revokeLocal(): Promise<void> {
+  if (!fs.existsSync(LOCAL_KV_DIR)) {
+    ok("No local sessions found — nothing to revoke.")
+    return
+  }
+  if (!(await confirm("Revoke all local OAuth tokens? Dev server must be stopped first.", false))) {
+    console.log("  Cancelled.")
+    return
+  }
+  fs.rmSync(LOCAL_KV_DIR, { recursive: true, force: true })
+  ok("Local KV cleared — all sessions revoked.")
+  console.log(`  ${c.dim("Re-run the D1 migration if the dev server fails to start:")}`)
+  console.log(
+    `  ${c.dim("npx wrangler d1 execute oura-cache --local --file=./migrations/001_init.sql")}`,
+  )
+}
 
 async function main(): Promise<void> {
   banner("oura-mcp-server — Revoke OAuth tokens", [
@@ -18,10 +40,8 @@ async function main(): Promise<void> {
   const kvId = state["KV_NAMESPACE_ID"]
 
   if (!accountId || !kvId) {
-    throw new Error(
-      "No bootstrap state found — run `pnpm bootstrap` first.\n" +
-        `  Expected: ${BOOTSTRAP_STATE_PATH}`,
-    )
+    warn("No bootstrap state found — assuming local dev mode.")
+    return revokeLocal()
   }
 
   // List all keys in the OAuth KV namespace.
