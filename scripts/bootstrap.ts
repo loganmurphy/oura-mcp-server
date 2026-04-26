@@ -269,6 +269,32 @@ async function runDeploy(accountId: string): Promise<{ code: number | null; outp
   });
 }
 
+async function waitForWorker(workerUrl: string, isFirstDeploy: boolean, timeoutMs = 120_000): Promise<boolean> {
+  const healthUrl = `${workerUrl}/health`
+  const deadline = Date.now() + timeoutMs
+  if (isFirstDeploy) {
+    console.log()
+    info("First-time deploy: Cloudflare is provisioning an SSL certificate for your workers.dev subdomain.")
+    info("This only happens once — subsequent deploys are instant.")
+  }
+  process.stdout.write(`  ${c.dim("•")} ${c.dim("Waiting for Worker to come online")}`)
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(healthUrl, { signal: AbortSignal.timeout(5_000) })
+      if (res.ok) {
+        process.stdout.write("\n")
+        return true
+      }
+    } catch {
+      // SSL not ready or Worker not up yet — keep polling
+    }
+    process.stdout.write(c.dim("."))
+    await new Promise((r) => setTimeout(r, 3_000))
+  }
+  process.stdout.write("\n")
+  return false
+}
+
 async function deployWorker(accountId: string): Promise<string> {
   step(10, "Deploy Worker to Cloudflare");
 
@@ -412,13 +438,21 @@ async function main(): Promise<void> {
   applyD1Schema(accountId);
   const ouraToken   = await ensureOuraToken();
   const mcpPassword = await promptMcpPassword();
-  const workerUrl   = await deployWorker(accountId);
-  setWorkerSecrets(accountId, ouraToken, mcpPassword);
+  const workerUrl = await deployWorker(accountId)
+  setWorkerSecrets(accountId, ouraToken, mcpPassword)
 
-  const mcpUrl = `${workerUrl}/mcp`;
-  const clipped = copyToClipboard(mcpUrl);
+  const alreadyConnected = loadDevVars(BOOTSTRAP_STATE_PATH)["CLAUDE_CONNECTED"] === "true"
+  const ready = await waitForWorker(workerUrl, !alreadyConnected)
+  if (!ready) {
+    warn("Worker URL isn't responding yet — SSL cert may still be provisioning.")
+    warn("Wait ~60s and try connecting Claude, or re-run `pnpm bootstrap` to retry.")
+  } else {
+    ok("Worker is live and reachable")
+  }
 
-  const alreadyConnected = loadDevVars(BOOTSTRAP_STATE_PATH)["CLAUDE_CONNECTED"] === "true";
+  const mcpUrl = `${workerUrl}/mcp`
+  const clipped = copyToClipboard(mcpUrl)
+
   if (!alreadyConnected) {
     openBrowser("https://claude.ai/settings/connectors");
     saveDevVars(BOOTSTRAP_STATE_PATH, { CLAUDE_CONNECTED: "true" });
