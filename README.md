@@ -118,6 +118,8 @@ curl -s -X POST $BASE/mcp -H "Content-Type: application/json" \
 
 ### Full OAuth flow (cURL PKCE)
 
+Run these blocks in order. The Python listener in step 3 captures and decodes the auth code automatically — you only need to log in when prompted.
+
 ```bash
 # 1. Register a client
 CLIENT=$(curl -s -X POST $BASE/oauth/register -H "Content-Type: application/json" \
@@ -129,21 +131,36 @@ CLIENT_ID=$(echo $CLIENT | jq -r .client_id)
 # 2. PKCE challenge
 CODE_VERIFIER=$(openssl rand -base64 32 | tr -d '=+/' | cut -c1-43)
 CODE_CHALLENGE=$(printf '%s' "$CODE_VERIFIER" | openssl dgst -sha256 -binary | base64 | tr '+/' '-_' | tr -d '=')
+```
 
-# 3. Start a listener, open the URL in your browser, and log in.
-#    The success page fires a hidden iframe to localhost:9999 — nc catches the GET request.
-#    Look for a line like: GET /callback?code=owner%3AXXXX&state=test HTTP/1.1
-#    The code value is URL-encoded (%3A = :). Decode it and set AUTH_CODE immediately.
-nc -l 9999 &
+```bash
+# 3. Start a listener that captures and decodes the auth code automatically,
+#    then open the URL in your browser and log in.
+#    The success page fires a hidden iframe to localhost:9999 — the listener catches it.
+python3 -c "
+import socket, urllib.parse, re
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('', 9999))
+s.listen(1)
+conn, _ = s.accept()
+data = conn.recv(4096).decode('utf-8', errors='ignore')
+conn.send(b'HTTP/1.1 200 OK\r\n\r\nOK')
+conn.close(); s.close()
+m = re.search(r'[?&]code=([^& \r\n]+)', data)
+if m:
+    with open('/tmp/oauth_code.txt', 'w') as f: f.write(urllib.parse.unquote(m.group(1)))
+" &
 LISTENER_PID=$!
+echo "Open this URL in your browser and log in:"
 echo "$BASE/authorize?client_id=$CLIENT_ID&response_type=code&redirect_uri=http://localhost:9999/callback&code_challenge=$CODE_CHALLENGE&code_challenge_method=S256&state=test"
-# After logging in, nc prints the GET line. Kill the listener and decode the code:
-kill $LISTENER_PID 2>/dev/null
-# AUTH_CODE=$(python3 -c "import urllib.parse,sys; print(urllib.parse.unquote(sys.argv[1]))" "PASTE_RAW_CODE_HERE")
-# Or just manually replace %3A with : and set it directly:
-# AUTH_CODE="owner:XXXX:YYYY"
+wait $LISTENER_PID
+AUTH_CODE=$(cat /tmp/oauth_code.txt)
+echo "Got code: ${AUTH_CODE:0:20}..."
+```
 
-# 4. Exchange code for token (--data-urlencode handles colons in the code value)
+```bash
+# 4. Exchange code for token
 TOKEN=$(curl -s -X POST $BASE/oauth/token \
   --data-urlencode "grant_type=authorization_code" \
   --data-urlencode "code=$AUTH_CODE" \
@@ -151,7 +168,7 @@ TOKEN=$(curl -s -X POST $BASE/oauth/token \
   --data-urlencode "client_id=$CLIENT_ID" \
   --data-urlencode "code_verifier=$CODE_VERIFIER" \
   | jq -r .access_token)
-echo "Token: $TOKEN"
+echo "Token: ${TOKEN:0:30}..."
 
 # 5. Call a tool
 curl -s -X POST $BASE/mcp -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
