@@ -130,18 +130,18 @@ CLIENT_ID=$(echo $CLIENT | jq -r .client_id)
 CODE_VERIFIER=$(openssl rand -base64 32 | tr -d '=+/' | cut -c1-43)
 CODE_CHALLENGE=$(printf '%s' "$CODE_VERIFIER" | openssl dgst -sha256 -binary | base64 | tr '+/' '-_' | tr -d '=')
 
-# 3. Start a local listener to capture the auth code, then open the URL in your browser.
-#    The success page fires a hidden iframe to localhost:9999 — the listener catches it.
-#    After logging in, the listener prints a GET request line containing code=XXXX.
-#    Stop it with Ctrl-C, then set AUTH_CODE to that value.
-python3 -m http.server 9999 &
+# 3. Start a listener, open the URL in your browser, and log in.
+#    The success page fires a hidden iframe to localhost:9999 — nc catches the GET request.
+#    Look for a line like: GET /callback?code=owner%3AXXXX&state=test HTTP/1.1
+#    The code value is URL-encoded (%3A = :). Decode it and set AUTH_CODE immediately.
+nc -l 9999 &
 LISTENER_PID=$!
 echo "$BASE/authorize?client_id=$CLIENT_ID&response_type=code&redirect_uri=http://localhost:9999/callback&code_challenge=$CODE_CHALLENGE&code_challenge_method=S256&state=test"
-# Open the URL above in your browser and log in. Watch for a line like:
-#   "GET /callback?code=XXXX&state=test HTTP/1.1"
-# Then:
+# After logging in, nc prints the GET line. Kill the listener and decode the code:
 kill $LISTENER_PID 2>/dev/null
-echo -n "Paste the code value from the GET line above: " && read -r AUTH_CODE
+# AUTH_CODE=$(python3 -c "import urllib.parse,sys; print(urllib.parse.unquote(sys.argv[1]))" "PASTE_RAW_CODE_HERE")
+# Or just manually replace %3A with : and set it directly:
+# AUTH_CODE="owner:XXXX:YYYY"
 
 # 4. Exchange code for token
 TOKEN=$(curl -s -X POST $BASE/oauth/token -H "Content-Type: application/x-www-form-urlencoded" \
