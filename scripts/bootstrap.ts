@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 import {
   banner, c, confirm, closePrompts, info, ok, pick,
@@ -129,7 +129,10 @@ function ensureD1(accountId: string): string {
   });
   if (createResult.status !== 0) throw new Error(`D1 create failed: ${createResult.stderr?.trim()}`);
 
-  const uuid = JSON.parse(createResult.stdout.match(/\{[\s\S]*\}/)?.[0] ?? "{}").uuid as string | undefined;
+  // wrangler d1 create outputs TOML in v4+ (database_id = "..."); older versions used JSON ({ "uuid": "..." })
+  const uuid =
+    createResult.stdout.match(/database_id\s*=\s*"([^"]+)"/)?.[1] ??
+    (JSON.parse(createResult.stdout.match(/\{[\s\S]*\}/)?.[0] ?? "{}") as Record<string, string>).uuid;
   if (!uuid) throw new Error("D1 create succeeded but couldn't parse the database UUID");
   ok(`Created D1 database ${c.cyan(D1_NAME)} ${c.dim(`(${uuid})`)}`);
   return uuid;
@@ -240,27 +243,51 @@ async function promptMcpPassword(): Promise<string> {
   return password;
 }
 
-function deployWorker(accountId: string): string {
+async function runDeploy(accountId: string): Promise<{ code: number | null; output: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("npx", ["wrangler", "deploy"], {
+      stdio: ["inherit", "pipe", "pipe"],
+      env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: accountId },
+    });
+
+    let output = "";
+    child.stdout?.on("data", (chunk: Buffer) => { const t = chunk.toString(); output += t; process.stdout.write(t); });
+    child.stderr?.on("data", (chunk: Buffer) => { const t = chunk.toString(); output += t; process.stderr.write(t); });
+    child.on("exit", (code) => resolve({ code, output }));
+    child.on("error", reject);
+  });
+}
+
+async function deployWorker(accountId: string): Promise<string> {
   step(10, "Deploy Worker to Cloudflare");
 
-  info("Running `wrangler deploy`... (first deploy takes ~20s)");
-  // Capture stdout so we can parse the workers.dev URL; stream stderr live.
-  const result = spawnSync("npx", ["wrangler", "deploy"], {
-    stdio: ["ignore", "pipe", "inherit"],
-    encoding: "utf8",
-    env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: accountId },
-  });
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    info(attempt === 1 ? "Running `wrangler deploy`... (first deploy takes ~20s)" : "Retrying deploy...");
 
-  // Stream captured stdout to the terminal so users see deploy progress.
-  if (result.stdout) process.stdout.write(result.stdout);
-  if (result.status !== 0) throw new Error(`wrangler deploy failed (exit ${result.status})`);
+    const { code, output } = await runDeploy(accountId);
 
-  // wrangler deploy prints the workers.dev URL after "Deployed ... triggers:"
-  const match = result.stdout?.match(/https:\/\/[\w-]+\.[\w-]+\.workers\.dev/);
-  if (!match) throw new Error("Deploy succeeded but couldn't parse the Worker URL from output.");
+    if (code === 0) {
+      const match = output.match(/https:\/\/[\w-]+\.[\w-]+\.workers\.dev/);
+      if (!match) throw new Error("Deploy succeeded but couldn't parse the Worker URL from output.");
+      ok(`Worker deployed → ${c.cyan(match[0])}`);
+      return match[0];
+    }
 
-  ok(`Worker deployed → ${c.cyan(match[0])}`);
-  return match[0];
+    // New Cloudflare accounts must register a workers.dev subdomain before first deploy.
+    // Wrangler exits with this message rather than prompting interactively.
+    if (attempt === 1 && output.includes("workers.dev subdomain")) {
+      warn("Your Cloudflare account needs a workers.dev subdomain — required for first deploy.");
+      console.log(`  ${c.dim("A browser will open to Workers & Pages. Click 'Get started' and choose a subdomain.")}`);
+      openBrowser(`https://dash.cloudflare.com/${accountId}/workers`);
+      await pressEnter("Press Enter once your subdomain is registered...");
+      continue;
+    }
+
+    throw new Error(`wrangler deploy failed (exit ${code})`);
+  }
+
+  // v8 ignore next -- unreachable: loop always returns or throws before this
+  throw new Error("wrangler deploy failed — check your Cloudflare account setup");
 }
 
 function setWorkerSecrets(
@@ -365,7 +392,7 @@ async function main(): Promise<void> {
   applyD1Schema(accountId);
   const ouraToken   = await ensureOuraToken();
   const mcpPassword = await promptMcpPassword();
-  const workerUrl   = deployWorker(accountId);
+  const workerUrl   = await deployWorker(accountId);
   setWorkerSecrets(accountId, ouraToken, mcpPassword);
 
   const mcpUrl = `${workerUrl}/mcp`;
