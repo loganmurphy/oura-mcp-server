@@ -19,6 +19,10 @@ npx tsc --noEmit -p tsconfig.scripts.json   # Type-check the bootstrap script
 npx tsc --noEmit                             # Type-check the Worker (no build step — wrangler bundles via esbuild)
 ```
 
+## Code style
+
+- No section-header comments (`// ── Foo ────`). Comments only where behavior is non-obvious.
+
 Pre-commit hooks are managed by **lefthook** (`lefthook.yml`). They install automatically on `pnpm install` and run lint + both typechecks in parallel before every commit. To run manually: `pnpm lefthook run pre-commit`.
 
 D1 migrations:

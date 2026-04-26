@@ -242,7 +242,6 @@ export async function handleMcp(
   }
 }
 
-// Receives authenticated /mcp requests from OAuthProvider (Bearer token verified).
 class McpApiHandler extends WorkerEntrypoint<Env> {
   async fetch(request: Request): Promise<Response> {
     // v8 ignore next 3 -- OAuthProvider handles CORS before reaching this handler
@@ -256,7 +255,6 @@ class McpApiHandler extends WorkerEntrypoint<Env> {
   }
 }
 
-// Handles /authorize, health checks, and anything else not matched by /mcp.
 export const defaultHandler = {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     if (request.method === "OPTIONS") {
