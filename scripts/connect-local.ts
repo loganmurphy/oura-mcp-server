@@ -9,11 +9,29 @@
  */
 
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { banner, c, ok, warn, info, closePrompts, promptHidden } from "./prompts";
-import { claudeCfgPath, loadDevVars, saveDevVars } from "./utils";
+import { loadDevVars, saveDevVars } from "./utils";
+
+function claudeCfgPath(): string {
+  switch (process.platform) {
+    case "darwin":
+      return path.join(os.homedir(), "Library/Application Support/Claude/claude_desktop_config.json");
+    case "win32":
+      return path.join(
+        process.env["APPDATA"] ?? path.join(os.homedir(), "AppData/Roaming"),
+        "Claude", "claude_desktop_config.json",
+      );
+    default:
+      return path.join(
+        process.env["XDG_CONFIG_HOME"] ?? path.join(os.homedir(), ".config"),
+        "Claude", "claude_desktop_config.json",
+      );
+  }
+}
 
 const DEV_VARS_PATH       = path.resolve(process.cwd(), ".dev.vars");
 const WRANGLER_JSONC_PATH = path.resolve(process.cwd(), "wrangler.jsonc");

@@ -355,6 +355,8 @@ async function main(): Promise<void> {
 
   const dbId        = ensureD1(accountId);
   const kvId        = ensureKvNamespace(accountId);
+  // Persist KV namespace ID so `pnpm revoke` can find it without parsing wrangler.jsonc.
+  saveDevVars(BOOTSTRAP_STATE_PATH, { KV_NAMESPACE_ID: kvId });
   writeWranglerConfig(dbId, kvId);
 
   step(6.5, "Regenerate Worker types");
@@ -374,7 +376,12 @@ async function main(): Promise<void> {
 
   const mcpUrl = `${workerUrl}/mcp`;
   const clipped = copyToClipboard(mcpUrl);
-  openBrowser("https://claude.ai/settings/connectors");
+
+  const alreadyConnected = loadDevVars(BOOTSTRAP_STATE_PATH)["CLAUDE_CONNECTED"] === "true";
+  if (!alreadyConnected) {
+    openBrowser("https://claude.ai/settings/connectors");
+    saveDevVars(BOOTSTRAP_STATE_PATH, { CLAUDE_CONNECTED: "true" });
+  }
 
   console.log();
   banner("✅  Setup complete!", [
@@ -382,10 +389,13 @@ async function main(): Promise<void> {
     "",
     `${c.bold("Connect Claude:")} ${clipped ? "MCP URL copied to clipboard —" : "paste this URL:"}`,
     `  ${c.cyan(mcpUrl)}`,
-    `  ${c.dim("(browser opened to claude.ai/settings/connectors)")}`,
+    ...(alreadyConnected
+      ? [`  ${c.dim("Run `pnpm revoke` to force re-auth if you changed your password.")}`]
+      : [`  ${c.dim("(browser opened to claude.ai/settings/connectors)")}`]
+    ),
     "",
     `${c.dim("First connection opens a browser for your MCP password.")}`,
-    `${c.dim("Token lasts 30 days — then a quick browser re-auth.")}`,
+    `${c.dim("Token lasts 30 days — re-auth is automatic via refresh token.")}`,
   ]);
 }
 

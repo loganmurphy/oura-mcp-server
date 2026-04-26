@@ -27,6 +27,7 @@
     "cf-typegen": "wrangler types",
     "bootstrap": "tsx scripts/bootstrap.ts",
     "connect-local": "tsx scripts/connect-local.ts",
+    "revoke": "tsx scripts/revoke.ts",
     "reset": "rm -f .dev.vars .bootstrap-state wrangler.jsonc && echo 'Cleared .dev.vars + .bootstrap-state + wrangler.jsonc. Re-run `pnpm bootstrap` to start fresh.'"
   },
   "devDependencies": {

@@ -1,24 +1,5 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import { spawnSync } from "node:child_process";
-
-export function claudeCfgPath(): string {
-  switch (process.platform) {
-    case "darwin":
-      return path.join(os.homedir(), "Library/Application Support/Claude/claude_desktop_config.json");
-    case "win32":
-      return path.join(
-        process.env["APPDATA"] ?? path.join(os.homedir(), "AppData/Roaming"),
-        "Claude", "claude_desktop_config.json",
-      );
-    default:
-      return path.join(
-        process.env["XDG_CONFIG_HOME"] ?? path.join(os.homedir(), ".config"),
-        "Claude", "claude_desktop_config.json",
-      );
-  }
-}
 
 export function loadDevVars(filePath: string): Record<string, string> {
   const vars: Record<string, string> = {};
@@ -61,11 +42,3 @@ export function copyToClipboard(text: string): boolean {
   return result.status === 0;
 }
 
-export function slugify(name: string, fallback = "oura-mcp"): string {
-  // workers.dev subdomain rules: 3-63 chars, a-z / 0-9 / -, no leading/trailing -.
-  const slug = name.toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 63);
-  return slug.length >= 3 ? slug : fallback;
-}
