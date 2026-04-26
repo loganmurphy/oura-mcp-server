@@ -107,8 +107,8 @@ export function renderSuccessPage(redirectTo: string): string {
       background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px;
       padding: .75rem 1rem; text-align: left;
     }
+    .tip-title { margin: 0 0 .25rem; font-size: .8rem; font-weight: 600; color: #0c4a6e; }
     .tip p { margin: 0; font-size: .8rem; color: #0369a1; line-height: 1.5; }
-    .tip strong { display: block; margin-bottom: .2rem; color: #0c4a6e; }
   </style>
 </head>
 <body>
@@ -121,7 +121,8 @@ export function renderSuccessPage(redirectTo: string): string {
     <h1>Connected to Oura</h1>
     <p class="subtitle">Authorization successful. You can close this window and return to Claude.</p>
     <div class="tip">
-      <p><strong>Enable all tools</strong>Find the Oura connector in Claude → click <strong>Configure</strong> → set each tool to <strong>Allow</strong>. Without this, Claude may ask for permission on every use.</p>
+      <p class="tip-title">Enable all tools</p>
+      <p>Find the Oura connector in Claude → click <b>Configure</b> → set each tool to <b>Allow</b>. Without this, Claude may ask for permission on every use.</p>
     </div>
   </div>
   <!-- Complete the OAuth code exchange silently so mcp-remote gets its token -->
