@@ -68,6 +68,8 @@ https://oura-mcp-server.<your-subdomain>.workers.dev/mcp
 
 Settings → Integrations → [Custom Connectors](https://claude.ai/settings/connectors) → Add custom connector → paste URL → Connect → enter password → Authorize.
 
+After connecting, click **Configure** on the Oura connector and set each tool to **Allow** — otherwise Claude may ask for permission on every use.
+
 `pnpm bootstrap` and `pnpm connect-local` (with ngrok) open this page and copy the URL automatically.
 
 ### Claude Desktop
