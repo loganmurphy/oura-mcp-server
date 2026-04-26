@@ -129,10 +129,10 @@ function ensureD1(accountId: string): string {
   });
   if (createResult.status !== 0) throw new Error(`D1 create failed: ${createResult.stderr?.trim()}`);
 
-  // wrangler d1 create outputs TOML in v4+ (database_id = "..."); older versions used JSON ({ "uuid": "..." })
-  const uuid =
-    createResult.stdout.match(/database_id\s*=\s*"([^"]+)"/)?.[1] ??
-    (JSON.parse(createResult.stdout.match(/\{[\s\S]*\}/)?.[0] ?? "{}") as Record<string, string>).uuid;
+  // Extract the UUID directly — format-agnostic regardless of wrangler's output format.
+  const uuid = createResult.stdout.match(
+    /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
+  )?.[0];
   if (!uuid) throw new Error("D1 create succeeded but couldn't parse the database UUID");
   ok(`Created D1 database ${c.cyan(D1_NAME)} ${c.dim(`(${uuid})`)}`);
   return uuid;
@@ -246,7 +246,7 @@ async function promptMcpPassword(): Promise<string> {
 async function runDeploy(accountId: string): Promise<{ code: number | null; output: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn("npx", ["wrangler", "deploy"], {
-      stdio: ["inherit", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: accountId },
     });
 
