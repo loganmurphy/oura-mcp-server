@@ -167,19 +167,20 @@ pnpm deploy
 
 All date params optional, default to last 7 days (YYYY-MM-DD). `end_date` is always **inclusive** from the caller's perspective.
 
-| Tool | Returns |
-|---|---|
-| `oura_daily_sleep` | Sleep score + contributors |
-| `oura_sleep_sessions` | Sleep stages, HRV, HR, breathing, temp |
-| `oura_daily_readiness` | Readiness score + contributors |
-| `oura_daily_spo2` | Blood oxygen saturation |
-| `oura_daily_activity` | Steps, calories, activity minutes |
-| `oura_workouts` | Session type, duration, calories, HR |
-| `oura_daily_stress` | Stress, recovery, ruggedness scores |
+| Tool                   | Returns                                |
+| ---------------------- | -------------------------------------- |
+| `oura_daily_sleep`     | Sleep score + contributors             |
+| `oura_sleep_sessions`  | Sleep stages, HRV, HR, breathing, temp |
+| `oura_daily_readiness` | Readiness score + contributors         |
+| `oura_daily_spo2`      | Blood oxygen saturation                |
+| `oura_daily_activity`  | Steps, calories, activity minutes      |
+| `oura_workouts`        | Session type, duration, calories, HR   |
+| `oura_daily_stress`    | Stress, recovery, ruggedness scores    |
 
 All tools accept `start_date`, `end_date`, and `skip_cache` (bool).
 
 **`day` field convention:**
+
 - Sleep, readiness, SpO2 → **wake-up date** (session ending morning of Apr 24 → `day: "2026-04-24"`)
 - Activity, workouts, stress → **calendar date**
 

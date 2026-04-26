@@ -5,15 +5,15 @@ export function escapeHtml(str: string): string {
     .replace(/&/g, "&amp;")
     .replace(/"/g, "&quot;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/>/g, "&gt;")
 }
 
 export function renderLoginPage(oauthParams: string, failed: boolean, rateLimited = false): string {
   const errorHtml = rateLimited
     ? `<p class="error">Too many attempts — please wait a minute and try again.</p>`
     : failed
-    ? `<p class="error">Incorrect password — please try again.</p>`
-    : "";
+      ? `<p class="error">Incorrect password — please try again.</p>`
+      : ""
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -71,7 +71,7 @@ export function renderLoginPage(oauthParams: string, failed: boolean, rateLimite
     </form>
   </div>
 </body>
-</html>`;
+</html>`
 }
 
 export function renderSuccessPage(redirectTo: string): string {
@@ -128,5 +128,5 @@ export function renderSuccessPage(redirectTo: string): string {
   <!-- Complete the OAuth code exchange silently so mcp-remote gets its token -->
   <iframe src="${escapeHtml(redirectTo)}" style="display:none" title="oauth-callback" aria-hidden="true"></iframe>
 </body>
-</html>`;
+</html>`
 }

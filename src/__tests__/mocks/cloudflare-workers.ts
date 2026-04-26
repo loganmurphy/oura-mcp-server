@@ -4,28 +4,28 @@
  */
 
 export class WorkerEntrypoint<Env = unknown> {
-  protected readonly env: Env;
-  protected readonly ctx: ExecutionContext;
+  protected readonly env: Env
+  protected readonly ctx: ExecutionContext
 
   constructor(ctx: ExecutionContext, env: Env) {
-    this.ctx = ctx;
-    this.env = env;
+    this.ctx = ctx
+    this.env = env
   }
 
   // Optional lifecycle hooks (not used in this project)
   fetch?(_request: Request): Promise<Response> {
-    return Promise.resolve(new Response("Not implemented", { status: 500 }));
+    return Promise.resolve(new Response("Not implemented", { status: 500 }))
   }
 }
 
 export class DurableObject<Env = unknown> {
-  protected readonly env: Env;
+  protected readonly env: Env
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  protected readonly ctx: any;
+  protected readonly ctx: any
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   constructor(ctx: any, env: Env) {
-    this.ctx = ctx;
-    this.env = env;
+    this.ctx = ctx
+    this.env = env
   }
 }
 
