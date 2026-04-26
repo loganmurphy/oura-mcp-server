@@ -143,8 +143,21 @@ async function main() {
   });
   ok("Dev server started (PID " + dev.pid + ")");
 
-  const ng = spawn("ngrok", ["http", "8787"], { stdio: "ignore" });
+  // Kill any existing ngrok before spawning — the free tier only allows one
+  // agent session at a time, so a pre-existing ngrok causes ours to exit immediately.
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/F", "/IM", "ngrok.exe"], { stdio: "ignore" });
+  } else {
+    spawnSync("pkill", ["-x", "ngrok"], { stdio: "ignore" });
+  }
+  await new Promise((r) => setTimeout(r, 300));
+
+  const ng = spawn("ngrok", ["http", "8787"], { stdio: ["ignore", "ignore", "pipe"] });
   children.push(ng);
+  ng.stderr?.on("data", (chunk: Buffer) => process.stderr.write(chunk));
+  ng.on("exit", (code) => {
+    if (code !== null && code !== 0) warn(`ngrok stopped (exit ${code})`);
+  });
   ok("ngrok started (PID " + ng.pid + ")");
 
   process.stdout.write(`  ${c.dim("•")} ${c.dim("Waiting for tunnel")}`);
