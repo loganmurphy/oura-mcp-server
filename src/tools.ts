@@ -1,28 +1,36 @@
 export interface ToolDef {
-  name: string;
-  description: string;
+  name: string
+  description: string
   inputSchema: {
-    type: "object";
-    properties: Record<string, { type: string; description: string }>;
-    required?: string[];
-  };
+    type: "object"
+    properties: Record<string, { type: string; description: string }>
+    required?: string[]
+  }
 }
 
 // Appended to every cacheable tool so Claude can bypass stale cache on demand.
 const SKIP_CACHE_PROP = {
   skip_cache: {
     type: "boolean",
-    description: "Set to true to bypass the D1 cache and fetch fresh data directly from Oura. Useful when data hasn't synced yet (e.g. this morning's sleep session).",
+    description:
+      "Set to true to bypass the D1 cache and fetch fresh data directly from Oura. Useful when data hasn't synced yet (e.g. this morning's sleep session).",
   },
-} as const;
+} as const
 
 // Shared date-range schema for tools whose Oura API endpoint uses exclusive end_date.
 // The server adds +1 day automatically so callers always use inclusive end_date.
 const DATE_RANGE_PROPS = {
-  start_date: { type: "string", description: "Start date in YYYY-MM-DD format (default: 7 days ago)" },
-  end_date: { type: "string", description: "End date in YYYY-MM-DD format, inclusive (default: today). The server adds +1 day when calling the Oura API, which treats end_date as exclusive." },
+  start_date: {
+    type: "string",
+    description: "Start date in YYYY-MM-DD format (default: 7 days ago)",
+  },
+  end_date: {
+    type: "string",
+    description:
+      "End date in YYYY-MM-DD format, inclusive (default: today). The server adds +1 day when calling the Oura API, which treats end_date as exclusive.",
+  },
   ...SKIP_CACHE_PROP,
-} as const;
+} as const
 
 export const SLEEP_TOOLS: ToolDef[] = [
   {
@@ -36,8 +44,14 @@ export const SLEEP_TOOLS: ToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
-        start_date: { type: "string", description: "Start date in YYYY-MM-DD format (default: 7 days ago)" },
-        end_date: { type: "string", description: "End date in YYYY-MM-DD format, inclusive (default: today)" },
+        start_date: {
+          type: "string",
+          description: "Start date in YYYY-MM-DD format (default: 7 days ago)",
+        },
+        end_date: {
+          type: "string",
+          description: "End date in YYYY-MM-DD format, inclusive (default: today)",
+        },
         ...SKIP_CACHE_PROP,
       },
     },
@@ -79,7 +93,7 @@ export const SLEEP_TOOLS: ToolDef[] = [
       properties: { ...DATE_RANGE_PROPS },
     },
   },
-];
+]
 
 export const ACTIVITY_TOOLS: ToolDef[] = [
   {
@@ -117,7 +131,7 @@ export const ACTIVITY_TOOLS: ToolDef[] = [
       properties: { ...DATE_RANGE_PROPS },
     },
   },
-];
+]
 
 /** All tools on a single /mcp endpoint. */
-export const OURA_TOOLS: ToolDef[] = [...SLEEP_TOOLS, ...ACTIVITY_TOOLS];
+export const OURA_TOOLS: ToolDef[] = [...SLEEP_TOOLS, ...ACTIVITY_TOOLS]

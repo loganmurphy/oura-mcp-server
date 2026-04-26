@@ -1,5 +1,5 @@
-import { defineConfig } from "vitest/config";
-import path from "path";
+import { defineConfig } from "vitest/config"
+import path from "path"
 
 export default defineConfig({
   resolve: {
@@ -7,10 +7,7 @@ export default defineConfig({
       // The `cloudflare:workers` module is only available in the CF Workers
       // runtime. Redirect it to a minimal stub so Vitest's Node environment
       // can import code that depends on WorkerEntrypoint.
-      "cloudflare:workers": path.resolve(
-        __dirname,
-        "src/__tests__/mocks/cloudflare-workers.ts",
-      ),
+      "cloudflare:workers": path.resolve(__dirname, "src/__tests__/mocks/cloudflare-workers.ts"),
     },
   },
   test: {
@@ -35,4 +32,4 @@ export default defineConfig({
       reporter: ["text", "lcov", "html"],
     },
   },
-});
+})

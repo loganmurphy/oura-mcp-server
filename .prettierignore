@@ -1,0 +1,4 @@
+pnpm-lock.yaml
+wrangler.example.jsonc
+wrangler.jsonc
+worker-configuration.d.ts
