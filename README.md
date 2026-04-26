@@ -118,10 +118,11 @@ curl -s -X POST $BASE/mcp -H "Content-Type: application/json" \
 
 ### Full OAuth flow (cURL PKCE)
 
-No browser required — curl handles the full flow end-to-end. Run this as one block, substituting your `MCP_AUTH_PASSWORD`:
+No browser required — curl handles the full flow end-to-end. Run this as one block:
 
 ```bash
-MCP_PASSWORD="your-password-here"
+# Prompt for password — avoids storing it in shell history
+read -s -p "MCP password: " MCP_PASSWORD && echo
 
 # 1. Register a client
 CLIENT=$(curl -s -X POST $BASE/oauth/register -H "Content-Type: application/json" \
@@ -143,7 +144,7 @@ AUTH_PAGE=$(curl -s -X POST $BASE/authorize \
 
 # Extract and decode the auth code from the success page iframe
 RAW_CODE=$(echo "$AUTH_PAGE" | grep -o 'code=[^&"]*' | head -1 | sed 's/code=//')
-AUTH_CODE=$(node -e "process.stdout.write(decodeURIComponent('$RAW_CODE'))")
+AUTH_CODE=$(node -e "process.stdout.write(decodeURIComponent(process.argv[1]))" "$RAW_CODE")
 
 # 4. Exchange code for token
 TOKEN=$(curl -s -X POST $BASE/oauth/token \
