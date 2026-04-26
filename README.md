@@ -189,18 +189,14 @@ All date params optional, default to last 7 days (YYYY-MM-DD). `end_date` is alw
 
 All tools accept `start_date`, `end_date`, and `skip_cache` (bool).
 
-> **Third-party integrations (e.g. Strava)** — workouts synced to Oura from external apps do not always appear in the Oura API. If you're missing workouts from a connected service, that's an upstream sync limitation, not a server issue. A dedicated Strava MCP server is coming soon.
-
 **`day` field convention:**
 
 - Sleep, readiness, SpO2 → **wake-up date** (session ending morning of Apr 24 → `day: "2026-04-24"`)
 - Activity, workouts, stress → **calendar date**
 
----
+### Third-party integrations
 
-## Integrations
-
-Note: Third-party integrations like Strava do not flow through the Oura API and are not available via this MCP server. Keep this in mind when expecting data from connected services.
+Workouts synced to Oura from external apps (e.g. Strava) do not always appear in the Oura API — this is an upstream sync limitation, not a server issue. A dedicated Strava MCP server is coming soon.
 
 ## Troubleshooting
 
