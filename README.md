@@ -143,9 +143,13 @@ kill $LISTENER_PID 2>/dev/null
 # Or just manually replace %3A with : and set it directly:
 # AUTH_CODE="owner:XXXX:YYYY"
 
-# 4. Exchange code for token
-TOKEN=$(curl -s -X POST $BASE/oauth/token -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=authorization_code&code=$AUTH_CODE&redirect_uri=http://localhost:9999/callback&client_id=$CLIENT_ID&code_verifier=$CODE_VERIFIER" \
+# 4. Exchange code for token (--data-urlencode handles colons in the code value)
+TOKEN=$(curl -s -X POST $BASE/oauth/token \
+  --data-urlencode "grant_type=authorization_code" \
+  --data-urlencode "code=$AUTH_CODE" \
+  --data-urlencode "redirect_uri=http://localhost:9999/callback" \
+  --data-urlencode "client_id=$CLIENT_ID" \
+  --data-urlencode "code_verifier=$CODE_VERIFIER" \
   | jq -r .access_token)
 echo "Token: $TOKEN"
 
