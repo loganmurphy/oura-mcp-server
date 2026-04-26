@@ -1,23 +1,5 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-
-export function claudeCfgPath(): string {
-  switch (process.platform) {
-    case "darwin":
-      return path.join(os.homedir(), "Library/Application Support/Claude/claude_desktop_config.json");
-    case "win32":
-      return path.join(
-        process.env["APPDATA"] ?? path.join(os.homedir(), "AppData/Roaming"),
-        "Claude", "claude_desktop_config.json",
-      );
-    default:
-      return path.join(
-        process.env["XDG_CONFIG_HOME"] ?? path.join(os.homedir(), ".config"),
-        "Claude", "claude_desktop_config.json",
-      );
-  }
-}
+import { spawnSync } from "node:child_process";
 
 export function loadDevVars(filePath: string): Record<string, string> {
   const vars: Record<string, string> = {};
@@ -39,11 +21,35 @@ export function saveDevVars(filePath: string, vars: Record<string, string>): voi
   fs.writeFileSync(filePath, content);
 }
 
-export function slugify(name: string, fallback = "oura-mcp"): string {
-  // workers.dev subdomain rules: 3-63 chars, a-z / 0-9 / -, no leading/trailing -.
-  const slug = name.toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 63);
-  return slug.length >= 3 ? slug : fallback;
+/** Open a URL in the default browser (best-effort, silent on failure). */
+export function openBrowser(url: string): void {
+  const cmd =
+    process.platform === "darwin" ? "open" :
+    process.platform === "win32"  ? "cmd" :
+    "xdg-open";
+  const args = process.platform === "win32" ? ["/c", "start", url] : [url];
+  spawnSync(cmd, args, { stdio: "ignore" });
 }
+
+/**
+ * Returns an error string if the password is too weak, or null if it passes.
+ * Rules: at least 12 characters, one number, one special character.
+ */
+export function validatePassword(pw: string): string | null {
+  if (pw.length < 12)          return "Password must be at least 12 characters.";
+  if (!/[0-9]/.test(pw))       return "Password must contain at least one number.";
+  if (!/[^a-zA-Z0-9]/.test(pw)) return "Password must contain at least one special character.";
+  return null;
+}
+
+/** Copy text to the system clipboard (best-effort, silent on failure). */
+export function copyToClipboard(text: string): boolean {
+  const cmd =
+    process.platform === "darwin" ? "pbcopy" :
+    process.platform === "win32"  ? "clip"   :
+    "xclip";
+  const args = process.platform === "linux" ? ["-selection", "clipboard"] : [];
+  const result = spawnSync(cmd, args, { input: text, stdio: ["pipe", "ignore", "ignore"] });
+  return result.status === 0;
+}
+

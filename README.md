@@ -6,34 +6,26 @@
 
 A lightweight [Model Context Protocol](https://modelcontextprotocol.io) server that exposes your [Oura Ring](https://ouraring.com) data as tools for Claude. Runs on Cloudflare Workers with a D1 cache layer for fast repeated queries.
 
-> **Platform support:** currently works with **Claude Desktop** only. Web and mobile support is coming soon.
+Works with **Claude Desktop, Claude.ai (web), and Claude mobile** — any MCP client that supports OAuth 2.1 remote servers.
 
 ## Architecture
 
 ```
-Claude Desktop
-     │  stdio
-  mcp-remote (npx)
-     │  HTTP POST /mcp/sleep  or  /mcp/activity
-Cloudflare Worker
-     ├─ D1 cache  (per-day TTL: 1h today / 6h yesterday / 24h older)
-     └─ Oura API  (fetched only for cache misses)
+Claude Desktop / Claude.ai / Claude mobile
+     │  OAuth 2.1 (PKCE)
+Cloudflare Worker  (@cloudflare/workers-oauth-provider)
+     ├─ KV       OAuth tokens (30-day access, non-expiring refresh)
+     ├─ D1       per-day cache (1h today / 6h yesterday / 24h older)
+     └─ Oura API fetched only on cache miss
 ```
 
-Tools are split across two MCP server endpoints to stay within Claude Desktop's per-server tool limit:
-
-| Endpoint | Tools |
-|---|---|
-| `/mcp/sleep` | `daily_sleep`, `sleep_sessions`, `daily_readiness`, `daily_spo2` |
-| `/mcp/activity` | `daily_activity`, `workouts`, `daily_stress` |
-
-On a partial cache hit the worker fetches only the missing date range from Oura and merges it with the cached portion before responding. Empty responses (data not yet synced from the ring) are never cached. Pass `skip_cache: true` on any tool call to bypass the cache entirely.
+All 7 tools share a single `/mcp` endpoint and one OAuth login. On a partial cache hit the worker fetches only the missing date range and merges it with cached data. Empty responses are never cached (ring not yet synced).
 
 ## Requirements
 
-- [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier is fine)
-- [Oura developer account](https://cloud.ouraring.com/personal-access-tokens) with a Personal Access Token
-- Node.js 24 and pnpm 10 — [Volta](https://volta.sh) is recommended to manage these automatically (versions are pinned in `package.json`)
+- [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier)
+- [Oura Personal Access Token](https://cloud.ouraring.com/personal-access-tokens)
+- Node.js 24, pnpm 10 — [Volta](https://volta.sh) recommended (versions pinned in `package.json`)
 
 ## Bootstrap
 
@@ -42,215 +34,211 @@ pnpm install
 pnpm bootstrap
 ```
 
-An interactive wizard handles the full setup end-to-end. It will:
+The wizard handles everything:
 
-1. Prompt you for a Cloudflare API token (opens the dashboard and walks through the required permissions)
-2. Pick an account and confirm your `workers.dev` subdomain
-3. Create a D1 database (`oura-cache`) and apply the schema
-4. Show a **plan preview** listing every resource that will be created or reused, and wait for your `y` before touching anything
-5. Prompt for your Oura Personal Access Token (or open the token page if you don't have one)
-6. Deploy the Worker and set `OURA_API_TOKEN` as a secret
-7. Provision Cloudflare Access (Zero Trust) so only your service token can reach the Worker
-8. Write the two `oura-sleep` / `oura-activity` entries into your Claude Desktop config (preserving any other MCP servers you have)
+1. Sign in to Cloudflare via `wrangler login`
+2. Select your account and preview what will be created
+3. Create D1 (`oura-cache`) and KV (`oura-oauth`) — or reuse if they exist
+4. Prompt for your Oura PAT and a password for the MCP login page
+5. Deploy the Worker and set secrets
+6. Copy the MCP URL to your clipboard and open `claude.ai/settings/connectors` (first run only)
 
-Re-running is safe — every step detects existing resources and reuses them. The only delete the wizard performs is removing a superseded service token after rotation.
+Re-running is fully idempotent.
 
-One manual step: Cloudflare API tokens can't be minted programmatically without an existing token, so the wizard opens the token page and asks you to paste one in, once. The required scopes are listed in the prompt. It's cached in `.dev.vars` and drives both the SDK calls and the `wrangler deploy` step.
-
-When it finishes, fully quit Claude Desktop (Cmd+Q) and relaunch — then ask *"What was my sleep score last night?"*
-
-The sections below cover manual setup (local dev, direct `wrangler deploy`) if you'd rather skip the wizard.
-
-### Just want to try it locally first?
-
-If you'd rather skip Cloudflare entirely and run against the local dev server:
+### Local dev first?
 
 ```bash
-pnpm install
-echo "OURA_API_TOKEN=your_token_here" > .dev.vars
-pnpm connect-local   # writes Claude Desktop config pointing at localhost:8787
+pnpm connect-local   # prompts for tokens, applies local D1 schema, guides ngrok tunnel setup
 pnpm dev             # keep running in a separate terminal
 ```
 
-Then fully quit Claude Desktop (Cmd+Q) and relaunch. Run `pnpm bootstrap` when you're ready to deploy.
+Run `pnpm bootstrap` when ready to deploy.
 
-## Local development
+---
 
-```bash
-# Copy the config template and fill in your own values (see Deploy section)
-cp wrangler.example.jsonc wrangler.jsonc
+## Connect to Claude
 
-pnpm install
+All clients connect to the same MCP endpoint. `pnpm bootstrap` copies this URL to your clipboard on completion:
 
-# Generate Worker environment types (derives from wrangler.jsonc)
-pnpm cf-typegen
-
-# Add your Oura token to local secrets
-echo "OURA_API_TOKEN=your_token_here" > .dev.vars
-
-# Apply the D1 schema locally (Miniflare, no Cloudflare account needed)
-npx wrangler d1 execute oura-cache --local --file=./migrations/001_init.sql
-
-# Start the dev server on http://localhost:8787
-pnpm dev
+```
+https://oura-mcp-server.<your-subdomain>.workers.dev/mcp
 ```
 
-### Smoke test
+### Claude.ai (web) and Claude mobile
 
-```bash
-# List tools
-curl -s -X POST http://localhost:8787/mcp/sleep \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq '.result.tools[].name'
+Settings → Integrations → [Custom Connectors](https://claude.ai/settings/connectors) → Add custom connector → paste URL → Connect → enter password → Authorize.
 
-# Call a tool
-curl -s -X POST http://localhost:8787/mcp/sleep \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oura_daily_readiness","arguments":{"start_date":"2026-04-14","end_date":"2026-04-20"}}}' | jq .
-```
+After connecting, click **Configure** on the Oura connector and set each tool to **Allow** — otherwise Claude may ask for permission on every use.
 
-## Deploy to Cloudflare
+`pnpm bootstrap` and `pnpm connect-local` (with ngrok) open this page and copy the URL automatically.
 
-```bash
-# 1. Authenticate
-npx wrangler login
+### Claude Desktop
 
-# 2. Create the D1 database — copy the printed database_id
-npx wrangler d1 create oura-cache
-
-# 3. Paste the database_id into wrangler.jsonc (created from wrangler.example.jsonc)
-
-# 4. Apply the schema to production
-npx wrangler d1 execute oura-cache --remote --file=./migrations/001_init.sql
-
-# 5. Set your Oura token as a Worker secret
-npx wrangler secret put OURA_API_TOKEN
-
-# 6. Deploy
-pnpm deploy
-```
-
-Your Worker will be live at `https://oura-mcp-server.<your-subdomain>.workers.dev`.
-
-## Connect to Claude Desktop
-
-Add both MCP servers to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
-    "oura-sleep": {
+    "oura": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "https://oura-mcp-server.<your-subdomain>.workers.dev/mcp/sleep"]
-    },
-    "oura-activity": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "https://oura-mcp-server.<your-subdomain>.workers.dev/mcp/activity"]
+      "args": ["-y", "mcp-remote", "https://oura-mcp-server.<your-subdomain>.workers.dev/mcp"]
     }
   }
 }
 ```
 
-For local dev, use `http://localhost:8787/mcp/sleep` etc. and keep `pnpm dev` running.
+Fully quit Claude Desktop (Cmd+Q) and relaunch. A browser window opens on first connection — enter your password and click Authorize.
 
-Restart Claude Desktop after any config change.
-
-## Tool reference
-
-All date params are optional and default to the last 7 days (`YYYY-MM-DD` format). All `end_date` values are **inclusive** from the caller's perspective.
-
-| Tool | Params | Returns |
-|---|---|---|
-| `oura_daily_sleep` | `start_date`, `end_date` | Sleep score + contributors |
-| `oura_sleep_sessions` | `start_date`, `end_date` | Sleep stages, HRV, HR, breathing, temp |
-| `oura_daily_readiness` | `start_date`, `end_date` | Readiness score + contributors |
-| `oura_daily_spo2` | `start_date`, `end_date` | Blood oxygen saturation |
-| `oura_daily_activity` | `start_date`, `end_date` | Steps, calories, activity minutes |
-| `oura_workouts` | `start_date`, `end_date` | Session type, duration, calories, HR |
-| `oura_daily_stress` | `start_date`, `end_date` | Stress, recovery, ruggedness scores |
-
-### Date conventions
-
-**`day` field:**
-- Sleep, readiness, and SpO2 use the **wake-up date** — a sleep starting the night of Apr 23 and ending the morning of Apr 24 has `day: "2026-04-24"`. Use today's date to get last night's data. `oura_daily_sleep` and `oura_sleep_sessions` share the same `day` field and can be joined by it.
-- Activity, workouts, and stress use the **calendar date** of the event.
-
-**`end_date` behavior:**
-All `end_date` values are **inclusive** from the caller's perspective across all tools. Internally, the Oura `daily_sleep` endpoint is the only one that treats `end_date` as inclusive; every other endpoint treats it as exclusive. The server adds +1 day automatically before calling the API for all non-daily_sleep tools, so you never need to adjust dates yourself.
-
-## Troubleshooting
-
-**Tools not appearing in Claude Desktop**
-- Fully quit Claude Desktop (Cmd+Q, not just close the window) and relaunch — it only loads the MCP tool list at startup
-- Check the config file path is exactly `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Make sure you saved the file and it's valid JSON — a trailing comma will silently break it
-
-**"OURA_API_TOKEN secret not configured" error**
-- For local dev: confirm `.dev.vars` exists in the project root with `OURA_API_TOKEN=your_token_here`
-- The dev server must be restarted after creating or editing `.dev.vars`
-- For production: run `npx wrangler secret put OURA_API_TOKEN` and redeploy
-
-**Claude can't connect / "MCP server disconnected"**
-- For local dev: confirm `pnpm dev` is running in the project directory
-- Test the server is reachable: `curl http://localhost:8787/health`
-- `mcp-remote` requires Node.js — confirm with `node --version` (needs 22 LTS; use [Volta](https://volta.sh) to match the pinned version)
-- Try clearing the mcp-remote cache: `rm -rf ~/.mcp-remote`
-
-**Not seeing all 7 tools (4 sleep + 3 activity)**
-- Claude Desktop has a per-server tool cap, so tools are intentionally split across two servers (`oura-sleep` and `oura-activity`)
-- Confirm both entries exist in `claude_desktop_config.json` and restart Claude Desktop
-
-**Port 8787 already in use**
-```bash
-lsof -ti :8787 | xargs kill -9
-pnpm dev
-```
-
-**Today's sleep/activity data missing or empty**
-- Sleep scores, readiness, and SpO2 are available as soon as the ring syncs after waking — open the Oura app to trigger a sync if data isn't showing up
-- Today's activity data is live and partial while the day is still in progress (steps/calories accumulate throughout the day)
-- If data appears stale, ask Claude to re-fetch with the cache bypassed: *"pull my sleep sessions for today with skip_cache: true"*
-- Empty responses are never cached, so retrying later will always hit Oura fresh
-
-**Oura API returning 401 / Claude sees "Oura rejected the token"**
-- Personal Access Tokens expire every ~3 months. The Worker detects 401/403 from Oura and returns an actionable error in the MCP tool response — so the error you see in Claude will already include the fix command
-- Generate a new PAT at [cloud.ouraring.com/personal-access-tokens](https://cloud.ouraring.com/personal-access-tokens)
-- Rotate the production secret: `npx wrangler secret put OURA_API_TOKEN` (no redeploy needed — it picks up on the next request)
-- For local dev: update `OURA_API_TOKEN=` in `.dev.vars` and restart `pnpm dev`
-
-**`pnpm bootstrap` fails with "Saved API token isn't working"**
-- The Cloudflare API token you pasted earlier has expired or been revoked — the wizard automatically removes it from `.dev.vars` and prompts for a new one on the same run, so just follow the prompt
-- The API token is separate from the Access *service* token used by Claude Desktop. Only the API token expires; the service token keeps working. Re-running `pnpm bootstrap` is purely to keep admin access to your Cloudflare resources
-- **Recommendation:** when you create the replacement, set a **6-12 month TTL** in the Cloudflare token creation UI (`TTL` section). A non-expiring token that leaks is a forever problem
-
-**Cloudflare Access blocking legitimate requests / "Forbidden" in mcp-remote logs**
-- Your service token (the one Claude Desktop uses, `CF_ACCESS_CLIENT_ID` + `CF_ACCESS_CLIENT_SECRET`) has been revoked, has expired, or the Access policy has drifted
-- Re-run `pnpm bootstrap` — it detects the broken state and provisions a fresh service token, then updates your Claude Desktop config
-- Don't forget to fully quit Claude Desktop (Cmd+Q) and relaunch afterward
-
-**Service token expiry / rotation**
-- Access service tokens default to a **1-year expiry** set by Cloudflare — the wizard accepts that default
-- Re-running `pnpm bootstrap` within 14 days of expiry automatically rotates the token and updates your Claude Desktop config — a one-command refresh once a year
-- Rotate manually anytime (e.g. if you suspect the secret leaked) by re-running `pnpm bootstrap`
+For local dev use `http://localhost:8787/mcp` (no ngrok needed — Claude Desktop can reach localhost directly).
 
 ---
 
-## Roadmap
+## Local development
 
-- **Web & mobile support** — currently requires Claude Desktop. A built-in OAuth layer is planned so any MCP-compatible client (Claude.ai web, mobile) can connect without manual config.
+```bash
+cp wrangler.example.jsonc wrangler.jsonc   # fill in YOUR_KV_NAMESPACE_ID + YOUR_DATABASE_ID
+pnpm install && pnpm cf-typegen
+printf 'OURA_API_TOKEN=your_token\nMCP_AUTH_PASSWORD=your_password\n' > .dev.vars
+npx wrangler d1 execute oura-cache --local --file=./migrations/001_init.sql
+pnpm dev   # http://localhost:8787
+```
+
+### Testing with ngrok
+
+Claude.ai web and mobile require HTTPS. Use ngrok to expose the local dev server:
+
+```bash
+brew install ngrok/ngrok/ngrok
+ngrok config add-authtoken YOUR_TOKEN   # free at ngrok.com
+
+pnpm dev             # terminal 1
+ngrok http 8787      # terminal 2 → https://xxxx.ngrok-free.app
+```
+
+`pnpm connect-local` detects a running ngrok tunnel automatically, copies the MCP URL to your clipboard, and opens `claude.ai/settings/connectors`.
+
+> Free tier URLs change on restart — re-add the integration in Claude.ai when that happens.
+
+---
+
+## Smoke testing
+
+```bash
+BASE=https://oura-mcp-server.<subdomain>.workers.dev   # or http://localhost:8787
+
+# Server reachable
+curl -s $BASE/.well-known/oauth-authorization-server | jq .
+curl -s $BASE/health
+
+# Unauthenticated call returns 401 — expected
+curl -s -X POST $BASE/mcp -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | jq .
+```
+
+### Full OAuth flow (cURL PKCE)
+
+```bash
+# 1. Register a client
+CLIENT=$(curl -s -X POST $BASE/oauth/register -H "Content-Type: application/json" \
+  -d '{"client_name":"curl-test","redirect_uris":["http://localhost:9999/callback"],
+       "grant_types":["authorization_code"],"response_types":["code"],
+       "token_endpoint_auth_method":"none"}')
+CLIENT_ID=$(echo $CLIENT | jq -r .client_id)
+
+# 2. PKCE challenge
+CODE_VERIFIER=$(openssl rand -base64 32 | tr -d '=+/' | cut -c1-43)
+CODE_CHALLENGE=$(printf '%s' "$CODE_VERIFIER" | openssl dgst -sha256 -binary | base64 | tr '+/' '-_' | tr -d '=')
+
+# 3. Open in browser, enter password, copy the code= from the redirect URL
+echo "$BASE/authorize?client_id=$CLIENT_ID&response_type=code&redirect_uri=http://localhost:9999/callback&code_challenge=$CODE_CHALLENGE&code_challenge_method=S256&state=test"
+read -r AUTH_CODE
+
+# 4. Exchange code for token
+TOKEN=$(curl -s -X POST $BASE/oauth/token -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=authorization_code&code=$AUTH_CODE&redirect_uri=http://localhost:9999/callback&client_id=$CLIENT_ID&code_verifier=$CODE_VERIFIER" \
+  | jq -r .access_token)
+
+# 5. Call a tool
+curl -s -X POST $BASE/mcp -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"oura_daily_sleep","arguments":{"start_date":"2026-04-18","end_date":"2026-04-25"}}}' | jq .
+```
+
+---
+
+## Manual deploy
+
+If you prefer not to use `pnpm bootstrap`:
+
+```bash
+npx wrangler login
+npx wrangler d1 create oura-cache
+npx wrangler kv namespace create OAUTH_KV
+# paste both IDs into wrangler.jsonc
+npx wrangler d1 execute oura-cache --remote --file=./migrations/001_init.sql
+npx wrangler secret put OURA_API_TOKEN
+npx wrangler secret put MCP_AUTH_PASSWORD
+pnpm deploy
+```
+
+---
+
+## Tool reference
+
+All date params optional, default to last 7 days (YYYY-MM-DD). `end_date` is always **inclusive** from the caller's perspective.
+
+| Tool | Returns |
+|---|---|
+| `oura_daily_sleep` | Sleep score + contributors |
+| `oura_sleep_sessions` | Sleep stages, HRV, HR, breathing, temp |
+| `oura_daily_readiness` | Readiness score + contributors |
+| `oura_daily_spo2` | Blood oxygen saturation |
+| `oura_daily_activity` | Steps, calories, activity minutes |
+| `oura_workouts` | Session type, duration, calories, HR |
+| `oura_daily_stress` | Stress, recovery, ruggedness scores |
+
+All tools accept `start_date`, `end_date`, and `skip_cache` (bool).
+
+**`day` field convention:**
+- Sleep, readiness, SpO2 → **wake-up date** (session ending morning of Apr 24 → `day: "2026-04-24"`)
+- Activity, workouts, stress → **calendar date**
+
+---
+
+## Troubleshooting
+
+**Tools not appearing in Claude Desktop** — fully quit (Cmd+Q) and relaunch; tool list loads at startup only.
+
+**OAuth popup doesn't close (Claude.ai web)** — the success page uses a hidden iframe to complete the exchange; wait ~5s then close manually, the token is stored.
+
+**`OURA_API_TOKEN` not configured** — local: check `.dev.vars` and restart `pnpm dev`; production: `npx wrangler secret put OURA_API_TOKEN`.
+
+**MCP server disconnected** — check `pnpm dev` is running; `curl localhost:8787/health`; clear mcp-remote cache: `rm -rf ~/.mcp-remote`.
+
+**Today's data empty** — open the Oura app to trigger a sync, then ask Claude to use `skip_cache: true`.
+
+**Oura 401 / token rejected** — PATs expire ~every 3 months. Rotate: `npx wrangler secret put OURA_API_TOKEN` (no redeploy needed).
+
+**Rotate MCP password** — `npx wrangler secret put MCP_AUTH_PASSWORD`, then `pnpm revoke` (invalidates existing sessions so Claude re-auths with the new password).
+
+**`pnpm bootstrap` fails at Cloudflare login** — run `npx wrangler login` manually first.
+
+**Port 8787 in use** — `lsof -ti :8787 | xargs kill -9 && pnpm dev`
+
+---
 
 ## Project structure
 
 ```
 src/
-  index.ts          Worker entry — MCP routing and tool dispatch
-  cache.ts          D1 cache layer (per-day TTL, partial hit merging)
-  oura.ts           Oura API client
-  tools.ts          MCP tool definitions (SLEEP_TOOLS / ACTIVITY_TOOLS)
+  index.ts          Worker entry — OAuth wrapper, /mcp dispatch, auth UI
+  cache.ts          D1 cache (per-day TTL, partial-hit merging)
+  oura.ts           Oura API client + response noise stripping
+  tools.ts          MCP tool definitions
+  ui.ts             Login and success page HTML
 scripts/
-  bootstrap.ts      Interactive setup wizard (D1, Worker deploy, Zero Trust, Claude Desktop config)
-  connect-local.ts  Wire Claude Desktop to the local dev server
-  utils.ts          Shared helpers (prompts, platform detection)
+  bootstrap.ts      Setup wizard (D1, KV, Worker deploy, secrets)
+  connect-local.ts  Credentials + D1 schema for local dev; guides ngrok tunnel setup
+  revoke.ts         Purge all OAuth KV tokens to force re-auth
 migrations/
   001_init.sql      D1 schema
 ```

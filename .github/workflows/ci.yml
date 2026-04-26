@@ -29,6 +29,14 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Generate Worker types
+        run: |
+          cp wrangler.example.jsonc wrangler.jsonc
+          printf 'OURA_API_TOKEN=placeholder\nMCP_AUTH_PASSWORD=placeholder\n' > .dev.vars
+          pnpm cf-typegen
+        env:
+          WRANGLER_SEND_METRICS: "false"
+
       - name: Typecheck worker
         run: npx tsc --noEmit
 

@@ -16,8 +16,8 @@ Include:
 **In scope:**
 - The Cloudflare Worker (`src/`)
 - The D1 cache layer and how data is stored/retrieved
+- The OAuth authorization flow and token storage (`OAUTH_KV`)
 - The bootstrap wizard's handling of API tokens and secrets (`scripts/`)
-- Cloudflare Access / Zero Trust configuration produced by the wizard
 
 **Out of scope:**
 - Oura's own API or app (report to Oura directly)

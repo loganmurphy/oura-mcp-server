@@ -5,11 +5,8 @@ import {
   defaultEnd,
   getCachedRange,
   setCachedRange,
-  getCachedSingleton,
-  setCachedSingleton,
 } from "../cache";
 
-// ── D1 mock ───────────────────────────────────────────────────────────────────
 
 function createMockD1() {
   const rows = new Map<string, { data: string; fetched_at: number }>();
@@ -68,7 +65,6 @@ function createMockD1() {
   } as unknown as D1Database & { _rows: Map<string, { data: string; fetched_at: number }> };
 }
 
-// ── datesInRange ──────────────────────────────────────────────────────────────
 
 describe("datesInRange", () => {
   it("returns a single date when start equals end", () => {
@@ -93,7 +89,6 @@ describe("datesInRange", () => {
   });
 });
 
-// ── defaultStart / defaultEnd ─────────────────────────────────────────────────
 
 describe("defaultStart / defaultEnd", () => {
   it("defaultEnd returns today in YYYY-MM-DD format", () => {
@@ -107,7 +102,6 @@ describe("defaultStart / defaultEnd", () => {
   });
 });
 
-// ── getCachedRange / setCachedRange ───────────────────────────────────────────
 
 describe("getCachedRange", () => {
   it("returns all misses when the DB is empty", async () => {
@@ -236,28 +230,3 @@ describe("setCachedRange", () => {
   });
 });
 
-// ── getCachedSingleton / setCachedSingleton ───────────────────────────────────
-
-describe("getCachedSingleton / setCachedSingleton", () => {
-  it("returns null when nothing is cached", async () => {
-    const db = createMockD1();
-    expect(await getCachedSingleton(db, "personal_info")).toBeNull();
-  });
-
-  it("returns the cached value after a write", async () => {
-    const db = createMockD1();
-    await setCachedSingleton(db, "personal_info", { age: 30 });
-    expect(await getCachedSingleton(db, "personal_info")).toEqual({ age: 30 });
-  });
-
-  it("returns null for an expired singleton", async () => {
-    const db = createMockD1();
-    // Insert with fetched_at 25h ago (TTL is 24h)
-    const oldTime = Date.now() - 25 * 60 * 60 * 1000;
-    db._rows.set("personal_info::__singleton__", {
-      data: JSON.stringify({ age: 30 }),
-      fetched_at: oldTime,
-    });
-    expect(await getCachedSingleton(db, "personal_info")).toBeNull();
-  });
-});

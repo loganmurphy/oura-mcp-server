@@ -3,19 +3,19 @@ const OURA_BASE = "https://api.ouraring.com";
 type OuraItem = Record<string, unknown>;
 
 function dateRange(startDate?: string, endDate?: string) {
-  const params = new URLSearchParams();
-  if (startDate) params.set("start_date", startDate);
-  if (endDate) params.set("end_date", endDate);
   if (!startDate) {
     const d = new Date();
     d.setDate(d.getDate() - 7);
-    params.set("start_date", d.toISOString().slice(0, 10));
+    startDate = d.toISOString().slice(0, 10);
   }
+  const params = new URLSearchParams({ start_date: startDate });
+  if (endDate) params.set("end_date", endDate);
   return params;
 }
 
 async function ouraget(token: string, path: string, params: URLSearchParams) {
   const qs = params.toString();
+  // v8 ignore next -- buildParams always adds start_date so qs is never empty in practice
   const url = `${OURA_BASE}${path}${qs ? "?" + qs : ""}`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
@@ -34,12 +34,8 @@ async function ouraget(token: string, path: string, params: URLSearchParams) {
   return res.json();
 }
 
-// ── Response noise stripping ──────────────────────────────────────────────────
-//
-// Several Oura endpoints include raw per-minute/per-5-min time-series arrays
-// that are not useful for LLM conversations but are large enough to overflow
-// the context window (e.g. met.items ≈ 1 440 floats per day, class_5_min ≈
-// 288 chars per day). Strip them before caching or returning.
+// Strip raw time-series arrays (met.items, class_5_min, sleep_phase_*, etc.)
+// before caching — they're large (thousands of tokens) and not useful for LLMs.
 
 function stripActivityNoise(item: OuraItem): OuraItem {
   const result = { ...item };
@@ -59,19 +55,14 @@ function dropItemsArray(nested: unknown): unknown {
 
 function stripSleepNoise(item: OuraItem): OuraItem {
   const result = { ...item };
-  // Remove raw per-5-min/30-sec time-series strings — these are large encoded
-  // arrays that add thousands of tokens without aiding LLM analysis.
   delete result["sleep_phase_5_min"];
   delete result["sleep_phase_30_sec"];
   delete result["app_sleep_phase_5_min"];
   delete result["movement_30_sec"];
-  // Keep hrv/heart_rate summary stats but drop the items arrays
   result["hrv"] = dropItemsArray(result["hrv"]);
   result["heart_rate"] = dropItemsArray(result["heart_rate"]);
   return result;
 }
-
-// ── API functions ─────────────────────────────────────────────────────────────
 
 export async function getDailySleep(token: string, startDate?: string, endDate?: string) {
   return ouraget(token, "/v2/usercollection/daily_sleep", dateRange(startDate, endDate));

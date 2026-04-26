@@ -1,10 +1,19 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { loadDevVars, saveDevVars, slugify, claudeCfgPath } from "../utils";
+import { loadDevVars, saveDevVars, openBrowser, copyToClipboard, validatePassword } from "../utils";
 
-// ── loadDevVars / saveDevVars ─────────────────────────────────────────────────
+// Mock node:child_process so spawnSync never actually runs system commands.
+vi.mock("node:child_process", () => ({ spawnSync: vi.fn(() => ({ status: 0 })) }));
+import { spawnSync } from "node:child_process";
+const mockSpawn = vi.mocked(spawnSync);
+
+function withPlatform(platform: NodeJS.Platform, fn: () => void): void {
+  const desc = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { value: platform, configurable: true });
+  try { fn(); } finally { Object.defineProperty(process, "platform", desc); }
+}
 
 describe("loadDevVars", () => {
   let tmpFile: string;
@@ -71,94 +80,72 @@ describe("saveDevVars", () => {
   });
 });
 
-// ── slugify ───────────────────────────────────────────────────────────────────
+describe("openBrowser", () => {
+  beforeEach(() => mockSpawn.mockClear());
 
-describe("slugify", () => {
-  it("lowercases and replaces non-alphanumeric runs with hyphens", () => {
-    expect(slugify("My Cool Account")).toBe("my-cool-account");
+  it("darwin — calls 'open' with the URL", () => {
+    withPlatform("darwin", () => openBrowser("https://example.com"));
+    expect(mockSpawn).toHaveBeenCalledWith("open", ["https://example.com"], { stdio: "ignore" });
   });
 
-  it("strips leading and trailing hyphens", () => {
-    expect(slugify("  hello  ")).toBe("hello");
+  it("win32 — calls 'cmd /c start'", () => {
+    withPlatform("win32", () => openBrowser("https://example.com"));
+    expect(mockSpawn).toHaveBeenCalledWith("cmd", ["/c", "start", "https://example.com"], { stdio: "ignore" });
   });
 
-  it("collapses multiple separators into one hyphen", () => {
-    expect(slugify("hello---world")).toBe("hello-world");
-  });
-
-  it("truncates to 63 characters", () => {
-    const long = "a".repeat(70);
-    expect(slugify(long).length).toBe(63);
-  });
-
-  it("returns the fallback when the slug is shorter than 3 chars", () => {
-    expect(slugify("ab")).toBe("oura-mcp");
-    expect(slugify("!@")).toBe("oura-mcp");
-  });
-
-  it("accepts a custom fallback", () => {
-    expect(slugify("!!", "my-fallback")).toBe("my-fallback");
+  it("linux — calls 'xdg-open'", () => {
+    withPlatform("linux", () => openBrowser("https://example.com"));
+    expect(mockSpawn).toHaveBeenCalledWith("xdg-open", ["https://example.com"], { stdio: "ignore" });
   });
 });
 
-// ── claudeCfgPath ─────────────────────────────────────────────────────────────
+describe("copyToClipboard", () => {
+  beforeEach(() => mockSpawn.mockClear());
 
-function withPlatform(platform: string, fn: () => void) {
-  const desc = Object.getOwnPropertyDescriptor(process, "platform")!;
-  Object.defineProperty(process, "platform", { value: platform, configurable: true });
-  try {
-    fn();
-  } finally {
-    Object.defineProperty(process, "platform", desc);
-  }
-}
-
-describe("claudeCfgPath", () => {
-  it("returns a string ending in claude_desktop_config.json", () => {
-    expect(claudeCfgPath()).toMatch(/claude_desktop_config\.json$/i);
+  it("darwin — calls 'pbcopy' and returns true on success", () => {
+    mockSpawn.mockReturnValueOnce({ status: 0 } as ReturnType<typeof spawnSync>);
+    let result!: boolean;
+    withPlatform("darwin", () => { result = copyToClipboard("hello"); });
+    expect(mockSpawn).toHaveBeenCalledWith("pbcopy", [], expect.objectContaining({ input: "hello" }));
+    expect(result).toBe(true);
   });
 
-  it("contains a Claude directory segment", () => {
-    expect(claudeCfgPath()).toMatch(/Claude/);
+  it("win32 — calls 'clip'", () => {
+    withPlatform("win32", () => copyToClipboard("hello"));
+    expect(mockSpawn).toHaveBeenCalledWith("clip", [], expect.objectContaining({ input: "hello" }));
   });
 
-  it("win32 — returns path under APPDATA when set", () => {
-    const origAppdata = process.env["APPDATA"];
-    process.env["APPDATA"] = "C:\\Users\\Test\\AppData\\Roaming";
-    withPlatform("win32", () => {
-      expect(claudeCfgPath()).toContain("Claude");
-      expect(claudeCfgPath()).toContain("claude_desktop_config.json");
-    });
-    if (origAppdata === undefined) delete process.env["APPDATA"];
-    else process.env["APPDATA"] = origAppdata;
+  it("linux — calls 'xclip' with -selection clipboard", () => {
+    withPlatform("linux", () => copyToClipboard("hello"));
+    expect(mockSpawn).toHaveBeenCalledWith("xclip", ["-selection", "clipboard"], expect.objectContaining({ input: "hello" }));
   });
 
-  it("win32 — falls back to homedir when APPDATA is unset", () => {
-    const origAppdata = process.env["APPDATA"];
-    delete process.env["APPDATA"];
-    withPlatform("win32", () => {
-      expect(claudeCfgPath()).toContain("Claude");
-    });
-    if (origAppdata !== undefined) process.env["APPDATA"] = origAppdata;
-  });
-
-  it("linux (default) — returns path under XDG_CONFIG_HOME when set", () => {
-    const origXdg = process.env["XDG_CONFIG_HOME"];
-    process.env["XDG_CONFIG_HOME"] = "/custom/config";
-    withPlatform("linux", () => {
-      expect(claudeCfgPath()).toContain("Claude");
-      expect(claudeCfgPath()).toContain("claude_desktop_config.json");
-    });
-    if (origXdg === undefined) delete process.env["XDG_CONFIG_HOME"];
-    else process.env["XDG_CONFIG_HOME"] = origXdg;
-  });
-
-  it("linux (default) — falls back to ~/.config when XDG_CONFIG_HOME is unset", () => {
-    const origXdg = process.env["XDG_CONFIG_HOME"];
-    delete process.env["XDG_CONFIG_HOME"];
-    withPlatform("linux", () => {
-      expect(claudeCfgPath()).toContain(".config");
-    });
-    if (origXdg !== undefined) process.env["XDG_CONFIG_HOME"] = origXdg;
+  it("returns false when the command fails", () => {
+    mockSpawn.mockReturnValueOnce({ status: 1 } as ReturnType<typeof spawnSync>);
+    expect(copyToClipboard("hello")).toBe(false);
   });
 });
+
+describe("validatePassword", () => {
+  it("accepts a strong password", () => {
+    expect(validatePassword("correct-horse-42!")).toBeNull();
+  });
+
+  it("accepts exactly 12 characters with number and special char", () => {
+    expect(validatePassword("abcdefghij1!")).toBeNull();
+  });
+
+  it("rejects passwords shorter than 12 characters", () => {
+    expect(validatePassword("Sh0rt!")).not.toBeNull();
+    expect(validatePassword("11charpass!")).not.toBeNull();
+  });
+
+  it("rejects passwords with no number", () => {
+    expect(validatePassword("correcthorsebattery!")).not.toBeNull();
+  });
+
+  it("rejects passwords with no special character", () => {
+    expect(validatePassword("correcthorse42aaa")).not.toBeNull();
+  });
+});
+

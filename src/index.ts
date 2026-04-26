@@ -1,3 +1,5 @@
+import OAuthProvider, { type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
+import { WorkerEntrypoint } from "cloudflare:workers";
 import {
   getDailyActivity,
   getDailyReadiness,
@@ -14,11 +16,12 @@ import {
   getCachedRange,
   setCachedRange,
 } from "./cache";
-import { ACTIVITY_TOOLS, SLEEP_TOOLS, type ToolDef } from "./tools";
+import { OURA_TOOLS, type ToolDef } from "./tools";
+import { renderLoginPage, renderSuccessPage } from "./ui";
 
-export interface Env {
-  OURA_API_TOKEN: string;
-  DB: D1Database;
+export interface Env extends Cloudflare.Env {
+  // Injected by OAuthProvider at request time:
+  OAUTH_PROVIDER: OAuthHelpers;
 }
 
 interface JsonRpcRequest {
@@ -89,6 +92,7 @@ async function fetchFromOura(
     case "oura_daily_spo2":       return getDailySpo2(token, d.start_date, exclusiveEnd(d.end_date));
     case "oura_workouts":         return getWorkouts(token, d.start_date, exclusiveEnd(d.end_date));
     case "oura_daily_stress":     return getDailyStress(token, d.start_date, exclusiveEnd(d.end_date));
+    // v8 ignore next -- defensive dead code: DATE_KEYED_TOOLS guard prevents reaching here
     default:                      throw new Error(`Unknown tool: ${name}`);
   }
 }
@@ -174,7 +178,7 @@ async function handleDateRangeTool(
   }));
 }
 
-async function handleMcp(
+export async function handleMcp(
   request: Request,
   env: Env,
   ctx: ExecutionContext,
@@ -238,35 +242,142 @@ async function handleMcp(
   }
 }
 
-export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+class McpApiHandler extends WorkerEntrypoint<Env> {
+  async fetch(request: Request): Promise<Response> {
+    // v8 ignore next 3 -- OAuthProvider handles CORS before reaching this handler
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS });
+    }
+    // v8 ignore next -- OAuthProvider rejects non-POST /mcp before reaching this handler
+    if (request.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
+    const noCache = new URL(request.url).searchParams.has("no_cache");
+    return handleMcp(request, this.env, this.ctx, OURA_TOOLS, "oura-mcp-server", noCache);
+  }
+}
+
+export const defaultHandler = {
+  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS });
     }
 
     const url = new URL(request.url);
-    const { pathname } = url;
-    const noCache = url.searchParams.has("no_cache");
 
-    if (pathname === "/mcp/sleep") {
-      if (request.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
-      return handleMcp(request, env, ctx, SLEEP_TOOLS, "oura-sleep-recovery", noCache);
+    if (url.pathname === "/authorize") {
+      if (request.method === "GET") {
+        // Validate the OAuth request params; throw → 400.
+        // Raw query string is embedded in the form so POST can reconstruct it.
+        try {
+          await env.OAUTH_PROVIDER.parseAuthRequest(request);
+        } catch {
+          return new Response("Invalid authorization request", { status: 400 });
+        }
+        return new Response(renderLoginPage(url.search, false), {
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      }
+
+      if (request.method === "POST") {
+        const ip = request.headers.get("CF-Connecting-IP") ?? "global";
+        const { success } = env.RATE_LIMITER
+          ? await env.RATE_LIMITER.limit({ key: ip })
+          : { success: true };
+        if (!success) {
+          return new Response(renderLoginPage("", false, true), {
+            status: 429,
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              "Retry-After": "60",
+            },
+          });
+        }
+
+        let formData: FormData;
+        try {
+          formData = await request.formData();
+        } catch {
+          return new Response("Invalid form submission", { status: 400 });
+        }
+
+        const password    = formData.get("password") as string | null;
+        const rawParams   = formData.get("oauth_params") as string | null;
+
+        if (!rawParams) {
+          return new Response("Missing OAuth parameters", { status: 400 });
+        }
+
+        // Reconstruct the original OAuth authorization request from the hidden field
+        const reconstructedRequest = new Request(
+          url.origin + "/authorize" + rawParams,
+          { method: "GET", headers: request.headers },
+        );
+
+        let oauthReq;
+        try {
+          oauthReq = await env.OAUTH_PROVIDER.parseAuthRequest(reconstructedRequest);
+        } catch {
+          return new Response("Invalid authorization request", { status: 400 });
+        }
+
+        if (!password || password !== env.MCP_AUTH_PASSWORD) {
+          return new Response(renderLoginPage(rawParams, true), {
+            status: 401,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          });
+        }
+
+        const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
+          request:  oauthReq,
+          userId:   "owner",
+          metadata: { authorizedAt: new Date().toISOString() },
+          scope:    oauthReq.scope,
+          props:    {},
+        });
+        return new Response(renderSuccessPage(redirectTo), {
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      }
+
+      return new Response("Method not allowed", { status: 405 });
     }
 
-    if (pathname === "/mcp/activity") {
-      if (request.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
-      return handleMcp(request, env, ctx, ACTIVITY_TOOLS, "oura-activity-wellness", noCache);
-    }
-
-    if (pathname === "/" || pathname === "/health") {
+    if (url.pathname === "/" || url.pathname === "/health") {
       return new Response(JSON.stringify({
-        status: "ok",
-        server: "oura-mcp-server",
-        version: "1.0.0",
-        endpoints: { sleep: "/mcp/sleep", activity: "/mcp/activity" },
+        status:   "ok",
+        server:   "oura-mcp-server",
+        version:  "1.0.0",
+        endpoint: "/mcp",
       }), { headers: { "Content-Type": "application/json" } });
     }
 
     return new Response("Not found", { status: 404 });
+  },
+};
+
+const oauthProvider = new OAuthProvider<Env>({
+  apiRoute:                    "/mcp",
+  apiHandler:                  McpApiHandler,
+  defaultHandler,
+  authorizeEndpoint:           "/authorize",
+  tokenEndpoint:               "/oauth/token",
+  clientRegistrationEndpoint:  "/oauth/register",
+  // 30-day access tokens — long-lived for a single-user personal tool
+  accessTokenTTL:              3600 * 24 * 30,
+  // Refresh tokens never expire — re-auth only needed if explicitly revoked
+});
+
+// Rewrite http:// → https:// when X-Forwarded-Proto: https is set.
+// OAuthProvider builds discovery/issuer URLs from request.url; without this,
+// ngrok and similar proxies cause the discovery document to advertise http://
+// endpoints, which OAuth clients reject.
+export default {
+  fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if (
+      request.headers.get("x-forwarded-proto") === "https" &&
+      request.url.startsWith("http://")
+    ) {
+      request = new Request(request.url.replace(/^http:\/\//, "https://"), request);
+    }
+    return oauthProvider.fetch(request, env, ctx);
   },
 } satisfies ExportedHandler<Env>;

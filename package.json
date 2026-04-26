@@ -8,7 +8,14 @@
     "type": "git",
     "url": "https://github.com/loganmurphy/oura-mcp-server.git"
   },
-  "keywords": ["mcp", "oura", "claude", "cloudflare-workers", "health", "wearables"],
+  "keywords": [
+    "mcp",
+    "oura",
+    "claude",
+    "cloudflare-workers",
+    "health",
+    "wearables"
+  ],
   "private": true,
   "scripts": {
     "lint": "oxlint --config .oxlintrc.json --deny-warnings src scripts",
@@ -20,19 +27,18 @@
     "cf-typegen": "wrangler types",
     "bootstrap": "tsx scripts/bootstrap.ts",
     "connect-local": "tsx scripts/connect-local.ts",
-    "reset": "rm -f .dev.vars wrangler.jsonc && echo 'Cleared .dev.vars + wrangler.jsonc. Re-run `pnpm bootstrap` to start fresh.'"
+    "revoke": "tsx scripts/revoke.ts",
+    "reset": "rm -f .dev.vars .bootstrap-state wrangler.jsonc && echo 'Cleared .dev.vars + .bootstrap-state + wrangler.jsonc. Re-run `pnpm bootstrap` to start fresh. To also sign out of Cloudflare: npx wrangler logout'"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250409.0",
     "@types/node": "^25.6.0",
     "@vitest/coverage-v8": "^4.1.5",
-    "cloudflare": "^5.2.0",
     "lefthook": "^2.1.6",
     "oxlint": "^1.61.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.3",
     "vitest": "^4.1.5",
-    "wrangler": "^4.10.0"
+    "wrangler": "^4.85.0"
   },
   "engines": {
     "node": "24.x",
@@ -47,6 +53,12 @@
       "esbuild",
       "sharp",
       "workerd"
+    ],
+    "ignoredBuiltDependencies": [
+      "lefthook"
     ]
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^0.4.0"
   }
 }

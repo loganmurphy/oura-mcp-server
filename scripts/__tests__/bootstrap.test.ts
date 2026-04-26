@@ -65,8 +65,6 @@ function mergeConfig(
   return true;
 }
 
-// ── mergeClaudeDesktopConfig ──────────────────────────────────────────────────
-
 describe("mergeClaudeDesktopConfig", () => {
   let tmpDir: string;
   let cfgPath: string;
