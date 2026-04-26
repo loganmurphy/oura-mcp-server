@@ -36,17 +36,6 @@ async function getNgrokUrl(): Promise<string | null> {
   }
 }
 
-async function isDevServerRunning(): Promise<boolean> {
-  try {
-    const res = await fetch("http://localhost:8787/health", {
-      signal: AbortSignal.timeout(1000),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
 async function waitForNgrokUrl(timeoutMs: number): Promise<string | null> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -141,36 +130,30 @@ async function main() {
     return;
   }
 
-  if (await isDevServerRunning()) {
-    ok("Dev server already running on :8787");
-  } else {
-    info("Starting pnpm dev...");
-    const dev = spawn("pnpm", ["dev"], { stdio: "ignore" });
-    children.push(dev);
-    dev.on("exit", (code) => {
-      if (code !== null && code !== 0) {
-        warn("pnpm dev stopped — port 8787 may be in use, or check your .dev.vars");
-      }
-    });
-    ok("Dev server started");
-  }
+  // Always spawn fresh children so this process owns their lifecycle.
+  // If port 8787 is already in use, the dev server exits immediately and warns below.
+  const dev = spawn("pnpm", ["dev"], { stdio: ["ignore", "ignore", "pipe"] });
+  children.push(dev);
+  // Forward dev server stderr so port-conflict and startup errors are visible.
+  dev.stderr?.on("data", (chunk: Buffer) => process.stderr.write(chunk));
+  dev.on("exit", (code) => {
+    if (code !== null && code !== 0) {
+      warn(`pnpm dev stopped (exit ${code}) — port 8787 may already be in use`);
+    }
+  });
+  ok("Dev server started (PID " + dev.pid + ")");
 
-  const existingTunnel = await getNgrokUrl();
-  if (existingTunnel) {
-    ok(`Using existing ngrok tunnel: ${c.cyan(existingTunnel)}`);
-  } else {
-    info("Starting ngrok tunnel...");
-    const ng = spawn("ngrok", ["http", "8787"], { stdio: "ignore" });
-    children.push(ng);
-  }
+  const ng = spawn("ngrok", ["http", "8787"], { stdio: "ignore" });
+  children.push(ng);
+  ok("ngrok started (PID " + ng.pid + ")");
 
   process.stdout.write(`  ${c.dim("•")} ${c.dim("Waiting for tunnel")}`);
-  const tunnelUrl = existingTunnel ?? await waitForNgrokUrl(30_000);
-  if (!existingTunnel) process.stdout.write("\n");
+  const tunnelUrl = await waitForNgrokUrl(30_000);
+  process.stdout.write("\n");
 
   if (!tunnelUrl) {
-    warn("Timed out waiting for ngrok — run `ngrok http 8787` in another terminal.");
-    console.log(`  Then add the MCP URL at ${c.cyan("https://claude.ai/settings/connectors")}`);
+    warn("Timed out waiting for ngrok tunnel.");
+    console.log(`  Run ${c.cyan("ngrok http 8787")} in another terminal, then add the URL at ${c.cyan("https://claude.ai/settings/connectors")}`);
     return;
   }
 
