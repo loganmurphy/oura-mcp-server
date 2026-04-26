@@ -118,7 +118,12 @@ curl -s -X POST $BASE/mcp -H "Content-Type: application/json" \
 
 ### Full OAuth flow (cURL PKCE)
 
+No browser required — curl handles the full flow end-to-end. Run this as one block:
+
 ```bash
+# Prompt for password — avoids storing it in shell history
+printf "MCP password: " && read -s MCP_PASSWORD && echo
+
 # 1. Register a client
 CLIENT=$(curl -s -X POST $BASE/oauth/register -H "Content-Type: application/json" \
   -d '{"client_name":"curl-test","redirect_uris":["http://localhost:9999/callback"],
@@ -130,14 +135,26 @@ CLIENT_ID=$(echo $CLIENT | jq -r .client_id)
 CODE_VERIFIER=$(openssl rand -base64 32 | tr -d '=+/' | cut -c1-43)
 CODE_CHALLENGE=$(printf '%s' "$CODE_VERIFIER" | openssl dgst -sha256 -binary | base64 | tr '+/' '-_' | tr -d '=')
 
-# 3. Open in browser, enter password, copy the code= from the redirect URL
-echo "$BASE/authorize?client_id=$CLIENT_ID&response_type=code&redirect_uri=http://localhost:9999/callback&code_challenge=$CODE_CHALLENGE&code_challenge_method=S256&state=test"
-read -r AUTH_CODE
+# 3. GET the login form, then POST the password to complete authorization
+FORM_HTML=$(curl -s "$BASE/authorize?client_id=$CLIENT_ID&response_type=code&redirect_uri=http://localhost:9999/callback&code_challenge=$CODE_CHALLENGE&code_challenge_method=S256&state=test")
+OAUTH_PARAMS=$(echo "$FORM_HTML" | grep -o 'name="oauth_params" value="[^"]*"' | sed 's/name="oauth_params" value="//;s/"$//' | sed 's/&amp;/\&/g')
+AUTH_PAGE=$(curl -s -X POST $BASE/authorize \
+  --data-urlencode "oauth_params=$OAUTH_PARAMS" \
+  --data-urlencode "password=$MCP_PASSWORD")
+
+# Extract and decode the auth code from the success page iframe
+RAW_CODE=$(echo "$AUTH_PAGE" | grep -o 'code=[^&"]*' | head -1 | sed 's/code=//')
+AUTH_CODE=$(node -e "process.stdout.write(decodeURIComponent(process.argv[1]))" "$RAW_CODE")
 
 # 4. Exchange code for token
-TOKEN=$(curl -s -X POST $BASE/oauth/token -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "grant_type=authorization_code&code=$AUTH_CODE&redirect_uri=http://localhost:9999/callback&client_id=$CLIENT_ID&code_verifier=$CODE_VERIFIER" \
+TOKEN=$(curl -s -X POST $BASE/oauth/token \
+  --data-urlencode "grant_type=authorization_code" \
+  --data-urlencode "code=$AUTH_CODE" \
+  --data-urlencode "redirect_uri=http://localhost:9999/callback" \
+  --data-urlencode "client_id=$CLIENT_ID" \
+  --data-urlencode "code_verifier=$CODE_VERIFIER" \
   | jq -r .access_token)
+echo "Token: ${TOKEN:0:30}..."
 
 # 5. Call a tool
 curl -s -X POST $BASE/mcp -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
@@ -184,7 +201,9 @@ All tools accept `start_date`, `end_date`, and `skip_cache` (bool).
 - Sleep, readiness, SpO2 → **wake-up date** (session ending morning of Apr 24 → `day: "2026-04-24"`)
 - Activity, workouts, stress → **calendar date**
 
----
+### Third-party integrations
+
+Workouts synced to Oura from external apps (e.g. Strava) do not always appear in the Oura API — this is an upstream sync limitation, not a server issue. A dedicated Strava MCP server is coming soon.
 
 ## Troubleshooting
 
