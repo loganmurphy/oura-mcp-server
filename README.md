@@ -122,7 +122,7 @@ No browser required — curl handles the full flow end-to-end. Run this as one b
 
 ```bash
 # Prompt for password — avoids storing it in shell history
-read -s -p "MCP password: " MCP_PASSWORD && echo
+printf "MCP password: " && read -s MCP_PASSWORD && echo
 
 # 1. Register a client
 CLIENT=$(curl -s -X POST $BASE/oauth/register -H "Content-Type: application/json" \
