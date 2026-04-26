@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 
 import { banner, c, ok, warn, info, closePrompts, promptHidden } from "./prompts";
-import { copyToClipboard, loadDevVars, openBrowser, saveDevVars } from "./utils";
+import { copyToClipboard, loadDevVars, openBrowser, saveDevVars, validatePassword } from "./utils";
 
 const DEV_VARS_PATH       = path.resolve(process.cwd(), ".dev.vars");
 const WRANGLER_JSONC_PATH = path.resolve(process.cwd(), "wrangler.jsonc");
@@ -68,8 +68,14 @@ async function main() {
   let mcpPassword = vars["MCP_AUTH_PASSWORD"] ?? "";
   if (!mcpPassword) {
     console.log(`\n  ${c.bold("MCP server password")} — you'll enter this once in the browser login prompt.`);
-    mcpPassword = await promptHidden("Choose a password (hidden)");
-    if (!mcpPassword) throw new Error("Password cannot be empty");
+    console.log(`  ${c.dim("Min 12 characters, one number, one special character.")}`);
+    while (true) {
+      mcpPassword = await promptHidden("Choose a password (hidden)");
+      if (!mcpPassword) throw new Error("Password cannot be empty");
+      const err = validatePassword(mcpPassword);
+      if (err) { warn(err); continue; }
+      break;
+    }
     saveDevVars(DEV_VARS_PATH, { MCP_AUTH_PASSWORD: mcpPassword });
     ok("MCP_AUTH_PASSWORD saved to .dev.vars");
   } else {

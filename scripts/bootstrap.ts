@@ -6,7 +6,7 @@ import {
   banner, c, confirm, closePrompts, info, ok, pick,
   promptHidden, pressEnter, step, warn,
 } from "./prompts";
-import { copyToClipboard, loadDevVars, openBrowser, saveDevVars } from "./utils";
+import { copyToClipboard, loadDevVars, openBrowser, saveDevVars, validatePassword } from "./utils";
 
 const WORKER_NAME      = "oura-mcp-server";
 const D1_NAME          = "oura-cache";
@@ -54,8 +54,15 @@ async function ensureWranglerAuth(): Promise<{ accountId: string; accountName: s
   } else {
     info("Opening Cloudflare sign-in in your browser...");
     console.log(`  ${c.dim("No account yet? You can create a free one during this step.")}`);
-    const login = spawnSync("npx", ["wrangler", "login"], { stdio: "inherit" });
-    if (login.status !== 0) throw new Error("`wrangler login` was cancelled or failed");
+    await new Promise<void>((resolve, reject) => {
+      loginChild = spawn("npx", ["wrangler", "login"], { stdio: "inherit" });
+      loginChild.on("exit", (code) => {
+        loginChild = null;
+        if (code !== 0) reject(new Error("`wrangler login` was cancelled or failed"));
+        else resolve();
+      });
+      loginChild.on("error", (err) => { loginChild = null; reject(err); });
+    });
 
     whoami = wranglerWhoami();
     if (!whoami) throw new Error(
@@ -234,13 +241,17 @@ async function promptMcpPassword(): Promise<string> {
 
   console.log("  This password protects your MCP server from unauthorized access.");
   console.log("  You'll enter it once when connecting Claude; the token lasts 30 days.");
-  console.log(`  ${c.dim("Stored as a Worker secret — never in code or logs.")}\n`);
+  console.log(`  ${c.dim("Min 12 characters, one number, one special character. Never stored in code or logs.")}\n`);
 
-  const password = await promptHidden("Choose a password (hidden)");
-  if (!password) throw new Error("Password cannot be empty");
-  saveDevVars(DEV_VARS_PATH, { [AUTH_SECRET_NAME]: password });
-  ok("Password saved to .dev.vars");
-  return password;
+  while (true) {
+    const password = await promptHidden("Choose a password (hidden)");
+    if (!password) throw new Error("Password cannot be empty");
+    const err = validatePassword(password);
+    if (err) { warn(err); continue; }
+    saveDevVars(DEV_VARS_PATH, { [AUTH_SECRET_NAME]: password });
+    ok("Password saved to .dev.vars");
+    return password;
+  }
 }
 
 async function runDeploy(accountId: string): Promise<{ code: number | null; output: string }> {
@@ -310,9 +321,18 @@ function setWorkerSecrets(
   }
 }
 
-// Readline keeps the event loop alive; ensure Ctrl+C exits even if wrangler's
-// OAuth callback server is running in the background during `wrangler login`.
-process.on("SIGINT", () => { closePrompts(); process.exit(130); });
+// Tracks the wrangler login child so SIGINT can kill it before exiting.
+// spawnSync blocks the event loop during `wrangler login`, so Ctrl+C can't
+// fire our handler until wrangler exits — which it may not do on its own.
+// Using async spawn keeps the event loop live and this reference lets us
+// terminate the child immediately on Ctrl+C.
+let loginChild: import("node:child_process").ChildProcess | null = null;
+
+process.on("SIGINT", () => {
+  if (loginChild) { try { loginChild.kill("SIGTERM"); } catch { /* ignore */ } }
+  closePrompts();
+  process.exit(130);
+});
 
 async function main(): Promise<void> {
   banner("oura-mcp-server — Bootstrap", [

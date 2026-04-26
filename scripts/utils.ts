@@ -31,6 +31,17 @@ export function openBrowser(url: string): void {
   spawnSync(cmd, args, { stdio: "ignore" });
 }
 
+/**
+ * Returns an error string if the password is too weak, or null if it passes.
+ * Rules: at least 12 characters, one number, one special character.
+ */
+export function validatePassword(pw: string): string | null {
+  if (pw.length < 12)          return "Password must be at least 12 characters.";
+  if (!/[0-9]/.test(pw))       return "Password must contain at least one number.";
+  if (!/[^a-zA-Z0-9]/.test(pw)) return "Password must contain at least one special character.";
+  return null;
+}
+
 /** Copy text to the system clipboard (best-effort, silent on failure). */
 export function copyToClipboard(text: string): boolean {
   const cmd =

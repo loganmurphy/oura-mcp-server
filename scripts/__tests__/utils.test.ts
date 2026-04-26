@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { loadDevVars, saveDevVars, openBrowser, copyToClipboard } from "../utils";
+import { loadDevVars, saveDevVars, openBrowser, copyToClipboard, validatePassword } from "../utils";
 
 // Mock node:child_process so spawnSync never actually runs system commands.
 vi.mock("node:child_process", () => ({ spawnSync: vi.fn(() => ({ status: 0 })) }));
@@ -123,6 +123,29 @@ describe("copyToClipboard", () => {
   it("returns false when the command fails", () => {
     mockSpawn.mockReturnValueOnce({ status: 1 } as ReturnType<typeof spawnSync>);
     expect(copyToClipboard("hello")).toBe(false);
+  });
+});
+
+describe("validatePassword", () => {
+  it("accepts a strong password", () => {
+    expect(validatePassword("correct-horse-42!")).toBeNull();
+  });
+
+  it("accepts exactly 12 characters with number and special char", () => {
+    expect(validatePassword("abcdefghij1!")).toBeNull();
+  });
+
+  it("rejects passwords shorter than 12 characters", () => {
+    expect(validatePassword("Sh0rt!")).not.toBeNull();
+    expect(validatePassword("11charpass!")).not.toBeNull();
+  });
+
+  it("rejects passwords with no number", () => {
+    expect(validatePassword("correcthorsebattery!")).not.toBeNull();
+  });
+
+  it("rejects passwords with no special character", () => {
+    expect(validatePassword("correcthorse42aaa")).not.toBeNull();
   });
 });
 
