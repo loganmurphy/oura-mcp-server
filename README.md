@@ -64,11 +64,13 @@ All clients connect to the same MCP endpoint. `pnpm bootstrap` copies this URL t
 https://oura-mcp-server.<your-subdomain>.workers.dev/mcp
 ```
 
-Settings → Integrations → [Custom Connectors](https://claude.ai/settings/connectors) → Add custom connector → paste URL → Connect → enter password → Authorize.
+Customize → [Connectors](https://claude.ai/customize/connectors) → Add custom connector → paste URL → Connect → enter password → Authorize.
 
 After connecting, click **Configure** on the Oura connector and set each tool to **Allow** — otherwise Claude may ask for permission on every use.
 
-`pnpm bootstrap` and `pnpm connect-local` (with ngrok) open this page and copy the URL automatically.
+> Setup must be done on [claude.ai](https://claude.ai) (web) — the mobile app doesn't support adding connectors. Once added via web, it's available across all Claude clients.
+
+`pnpm bootstrap` opens this page and copies the URL automatically.
 
 ---
 
@@ -84,7 +86,7 @@ pnpm dev   # http://localhost:8787
 
 ### Testing with ngrok
 
-Claude.ai web and mobile require HTTPS. Use ngrok to expose the local dev server:
+Claude.ai (web/mobile) requires HTTPS. Use ngrok to expose the local dev server:
 
 ```bash
 brew install ngrok/ngrok/ngrok
@@ -94,9 +96,9 @@ pnpm dev             # terminal 1
 ngrok http 8787      # terminal 2 → https://xxxx.ngrok-free.app
 ```
 
-`pnpm connect-local` detects a running ngrok tunnel automatically, copies the MCP URL to your clipboard, and opens `claude.ai/settings/connectors`.
+Add `<ngrok-url>/mcp` as a custom connector at `claude.ai/customize/connectors`.
 
-> Free tier URLs change on restart — re-add the integration in Claude.ai when that happens.
+> Free tier URLs change on restart — re-add the connector in Claude when that happens.
 
 ---
 
@@ -185,13 +187,9 @@ All tools accept `start_date`, `end_date`, and `skip_cache` (bool).
 
 ## Troubleshooting
 
-**Tools not appearing** — remove and re-add the connector at `claude.ai/settings/connectors`; tool list refreshes on reconnect.
-
-**OAuth popup doesn't close** — the success page uses a hidden iframe to complete the exchange; wait ~5s then close manually, the token is stored.
+**Tools not appearing** — remove and re-add the connector at `claude.ai/customize/connectors`; tool list refreshes on reconnect.
 
 **`OURA_API_TOKEN` not configured** — local: check `.dev.vars` and restart `pnpm dev`; production: `npx wrangler secret put OURA_API_TOKEN`.
-
-**MCP server disconnected** — check `pnpm dev` is running; `curl localhost:8787/health`.
 
 **Today's data empty** — open the Oura app to trigger a sync, then ask Claude to use `skip_cache: true`.
 
@@ -216,7 +214,7 @@ src/
   ui.ts             Login and success page HTML
 scripts/
   bootstrap.ts      Setup wizard (D1, KV, Worker deploy, secrets)
-  connect-local.ts  Credentials + D1 schema for local dev; guides ngrok tunnel setup
+  connect-local.ts  Credentials + D1 schema setup for local dev
   revoke.ts         Purge all OAuth KV tokens to force re-auth
 migrations/
   001_init.sql      D1 schema

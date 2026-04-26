@@ -9,7 +9,7 @@ pnpm dev          # Start local dev server on http://localhost:8787 (Miniflare, 
 pnpm deploy       # Deploy to Cloudflare Workers (requires wrangler login)
 pnpm cf-typegen   # Regenerate worker-configuration.d.ts from wrangler.jsonc bindings
 pnpm bootstrap      # Interactive wizard — provisions D1, KV, deploys Worker, copies MCP URL to clipboard
-pnpm connect-local  # Wire Claude Desktop to the local dev server (localhost:8787) — no Cloudflare needed
+pnpm connect-local  # Set up local credentials + D1 schema (no Cloudflare needed)
 pnpm revoke         # Invalidate all active OAuth sessions in KV (Claude re-auths on next use)
 pnpm reset          # Clear .dev.vars + .bootstrap-state + wrangler.jsonc (local state only, does not touch KV)
 pnpm lint           # oxlint (typescript/no-explicit-any + recommended rules, --deny-warnings)
