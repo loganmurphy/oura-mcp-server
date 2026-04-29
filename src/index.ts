@@ -46,6 +46,17 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, Mcp-Session-Id",
 }
 
+// Applied to all HTML responses (login + success pages).
+// frame-src * is required — the success page fires the OAuth callback in a hidden
+// iframe whose src is the client's redirect_uri (unknown at serve time).
+const HTML_HEADERS = {
+  "Content-Type": "text/html; charset=utf-8",
+  "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; frame-src *",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -302,9 +313,7 @@ export const defaultHandler = {
         } catch {
           return new Response("Invalid authorization request", { status: 400 })
         }
-        return new Response(renderLoginPage(url.search, false), {
-          headers: { "Content-Type": "text/html; charset=utf-8" },
-        })
+        return new Response(renderLoginPage(url.search, false), { headers: HTML_HEADERS })
       }
 
       if (request.method === "POST") {
@@ -315,10 +324,7 @@ export const defaultHandler = {
         if (!success) {
           return new Response(renderLoginPage("", false, true), {
             status: 429,
-            headers: {
-              "Content-Type": "text/html; charset=utf-8",
-              "Retry-After": "60",
-            },
+            headers: { ...HTML_HEADERS, "Retry-After": "60" },
           })
         }
 
@@ -352,7 +358,7 @@ export const defaultHandler = {
         if (!password || password !== env.MCP_AUTH_PASSWORD) {
           return new Response(renderLoginPage(rawParams, true), {
             status: 401,
-            headers: { "Content-Type": "text/html; charset=utf-8" },
+            headers: HTML_HEADERS,
           })
         }
 
@@ -363,9 +369,7 @@ export const defaultHandler = {
           scope: oauthReq.scope,
           props: {},
         })
-        return new Response(renderSuccessPage(redirectTo), {
-          headers: { "Content-Type": "text/html; charset=utf-8" },
-        })
+        return new Response(renderSuccessPage(redirectTo), { headers: HTML_HEADERS })
       }
 
       return new Response("Method not allowed", { status: 405 })
