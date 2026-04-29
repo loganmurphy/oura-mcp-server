@@ -15,6 +15,9 @@ function dateRange(startDate?: string, endDate?: string) {
 
 const MAX_RETRIES = 2
 
+// Retries up to MAX_RETRIES times on transient failures.
+// 429 → respects Retry-After header (capped at 60 s); 5xx → exponential backoff (1 s, 2 s).
+// 401/403 and other 4xx throw immediately without retrying.
 async function ouraget(token: string, path: string, params: URLSearchParams): Promise<unknown> {
   const qs = params.toString()
   // v8 ignore next -- buildParams always adds start_date so qs is never empty in practice
