@@ -101,3 +101,31 @@ export async function getWorkouts(token: string, startDate?: string, endDate?: s
 export async function getDailyStress(token: string, startDate?: string, endDate?: string) {
   return ouraget(token, "/v2/usercollection/daily_stress", dateRange(startDate, endDate))
 }
+
+export async function getDailyCycleInsights(token: string, startDate?: string, endDate?: string) {
+  return ouraget(token, "/v2/usercollection/daily_cycle_insights", dateRange(startDate, endDate))
+}
+
+export async function getDailyReproductiveHealth(
+  token: string,
+  startDate?: string,
+  endDate?: string,
+) {
+  return ouraget(
+    token,
+    "/v2/usercollection/daily_reproductive_health",
+    dateRange(startDate, endDate),
+  )
+}
+
+export async function getDailyPerimenopauseHealth(
+  token: string,
+  startDate?: string,
+  endDate?: string,
+) {
+  return ouraget(
+    token,
+    "/v2/usercollection/daily_perimenopause_health",
+    dateRange(startDate, endDate),
+  )
+}

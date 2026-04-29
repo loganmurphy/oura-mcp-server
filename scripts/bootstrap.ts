@@ -286,6 +286,39 @@ async function promptMcpPassword(): Promise<string> {
   }
 }
 
+async function promptWomensHealth(accountId: string): Promise<void> {
+  step(10, "Women's health tools (optional)")
+
+  const already = loadDevVars(DEV_VARS_PATH)["ENABLE_WOMENS_HEALTH"]
+  if (already) {
+    ok(`Women's health tools: ${already === "true" ? "enabled" : "disabled"} (already configured)`)
+    return
+  }
+
+  console.log(
+    `  ${c.dim("Oura offers dedicated cycle insights, reproductive health, and perimenopause")}`,
+  )
+  console.log(
+    `  ${c.dim("tracking endpoints. These are opt-in and require the feature to be enabled")}`,
+  )
+  console.log(`  ${c.dim("in the Oura app — the tools return empty data if not configured.")}`)
+  console.log()
+
+  const enable = await confirm("Enable women's health tools?", false)
+  saveDevVars(DEV_VARS_PATH, { ENABLE_WOMENS_HEALTH: enable ? "true" : "false" })
+  if (enable) {
+    ok("Women's health tools enabled — setting ENABLE_WOMENS_HEALTH secret")
+    spawnSync("npx", ["wrangler", "secret", "put", "ENABLE_WOMENS_HEALTH"], {
+      input: "true",
+      stdio: ["pipe", "inherit", "inherit"],
+      encoding: "utf8",
+      env: { ...process.env, CLOUDFLARE_ACCOUNT_ID: accountId },
+    })
+  } else {
+    ok("Women's health tools skipped — re-run `pnpm bootstrap` to enable later")
+  }
+}
+
 async function runDeploy(accountId: string): Promise<{ code: number | null; output: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn("npx", ["wrangler", "deploy"], {
@@ -342,7 +375,7 @@ async function waitForWorker(
 }
 
 async function deployWorker(accountId: string): Promise<string> {
-  step(10, "Deploy Worker to Cloudflare")
+  step(11, "Deploy Worker to Cloudflare")
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     info(
@@ -380,7 +413,7 @@ async function deployWorker(accountId: string): Promise<string> {
 }
 
 function setWorkerSecrets(accountId: string, ouraToken: string, mcpPassword: string): void {
-  step(11, "Set Worker secrets")
+  step(12, "Set Worker secrets")
 
   for (const [name, value] of [
     [OURA_SECRET_NAME, ouraToken],
@@ -498,6 +531,7 @@ async function main(): Promise<void> {
   applyD1Schema(accountId)
   const ouraToken = await ensureOuraToken()
   const mcpPassword = await promptMcpPassword()
+  await promptWomensHealth(accountId)
   const workerUrl = await deployWorker(accountId)
   setWorkerSecrets(accountId, ouraToken, mcpPassword)
 

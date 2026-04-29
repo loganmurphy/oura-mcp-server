@@ -2,7 +2,7 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import { spawnSync } from "node:child_process"
 
-import { banner, c, ok, warn, info, closePrompts, promptHidden } from "./prompts"
+import { banner, c, ok, warn, info, closePrompts, promptHidden, confirm } from "./prompts"
 import { loadDevVars, saveDevVars, validatePassword } from "./utils"
 
 const DEV_VARS_PATH = path.resolve(process.cwd(), ".dev.vars")
@@ -100,6 +100,31 @@ async function main() {
     )
   } else {
     ok("Local D1 schema ready")
+  }
+
+  const vars2 = loadDevVars(DEV_VARS_PATH)
+  const alreadyWomens = vars2["ENABLE_WOMENS_HEALTH"]
+  if (alreadyWomens) {
+    ok(
+      `Women's health tools: ${alreadyWomens === "true" ? "enabled" : "disabled"} (already configured)`,
+    )
+  } else {
+    console.log()
+    console.log(
+      `  ${c.dim("Oura offers dedicated cycle insights, reproductive health, and perimenopause")}`,
+    )
+    console.log(
+      `  ${c.dim("tracking endpoints. These are opt-in and require the feature to be enabled")}`,
+    )
+    console.log(`  ${c.dim("in the Oura app — the tools return empty data if not configured.")}`)
+    console.log()
+    const enableWomens = await confirm("Enable women's health tools?", false)
+    saveDevVars(DEV_VARS_PATH, { ENABLE_WOMENS_HEALTH: enableWomens ? "true" : "false" })
+    if (enableWomens) {
+      ok("Women's health tools enabled — ENABLE_WOMENS_HEALTH saved to .dev.vars")
+    } else {
+      ok("Women's health tools skipped — edit .dev.vars to enable later")
+    }
   }
 
   console.log()
