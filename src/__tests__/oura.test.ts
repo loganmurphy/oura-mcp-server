@@ -11,10 +11,16 @@ import {
 
 const TOKEN = "test-token"
 
-function mockFetch(status: number, body: unknown) {
+function mockFetch(status: number, body: unknown, headers?: Record<string, string>) {
   return vi
     .spyOn(globalThis, "fetch")
-    .mockResolvedValueOnce(new Response(JSON.stringify(body), { status }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(body), { status, headers }))
+}
+
+function mockFetchAlways(status: number, body: unknown) {
+  return vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(() => Promise.resolve(new Response(JSON.stringify(body), { status })))
 }
 
 beforeEach(() => {
@@ -32,9 +38,39 @@ describe("auth errors", () => {
     await expect(getDailySleep(TOKEN)).rejects.toThrow("npx wrangler secret put OURA_API_TOKEN")
   })
 
-  it("throws a plain error for other non-ok statuses", async () => {
-    mockFetch(500, "internal error")
+  it("throws after exhausting retries on 5xx", async () => {
+    vi.spyOn(globalThis, "setTimeout").mockImplementation((fn) => {
+      ;(fn as () => void)()
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    })
+    const spy = mockFetchAlways(500, "internal error")
     await expect(getDailySleep(TOKEN)).rejects.toThrow("Oura API error 500")
+    expect(spy).toHaveBeenCalledTimes(3) // initial + 2 retries
+  })
+
+  it("does not retry on 4xx client errors", async () => {
+    const spy = mockFetch(400, { error: "bad_request" })
+    await expect(getDailySleep(TOKEN)).rejects.toThrow("Oura API error 400")
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it("retries on 429 and succeeds on the next attempt", async () => {
+    vi.spyOn(globalThis, "setTimeout").mockImplementation((fn) => {
+      ;(fn as () => void)()
+      return 0 as unknown as ReturnType<typeof setTimeout>
+    })
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementationOnce(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({}), { status: 429, headers: { "Retry-After": "1" } }),
+        ),
+      )
+      .mockImplementationOnce(() =>
+        Promise.resolve(new Response(JSON.stringify({ data: [] }), { status: 200 })),
+      )
+    await expect(getDailySleep(TOKEN)).resolves.toEqual({ data: [] })
+    expect(spy).toHaveBeenCalledTimes(2)
   })
 })
 
