@@ -60,6 +60,20 @@ describe("defaultHandler — OPTIONS", () => {
   })
 })
 
+describe("HTML security headers", () => {
+  it("login page includes CSP, nosniff, HSTS, and Referrer-Policy", async () => {
+    const res = await defaultHandler.fetch(
+      new Request("http://localhost/authorize?client_id=test&response_type=code"),
+      makeEnv(),
+      makeCtx(),
+    )
+    expect(res.headers.get("Content-Security-Policy")).toContain("default-src 'none'")
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff")
+    expect(res.headers.get("Strict-Transport-Security")).toContain("max-age=")
+    expect(res.headers.get("Referrer-Policy")).toBe("no-referrer")
+  })
+})
+
 describe("defaultHandler — GET /authorize", () => {
   it("returns 400 when parseAuthRequest throws", async () => {
     const env = makeEnv({

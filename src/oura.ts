@@ -13,15 +13,23 @@ function dateRange(startDate?: string, endDate?: string) {
   return params
 }
 
-async function ouraget(token: string, path: string, params: URLSearchParams) {
+const MAX_RETRIES = 2
+
+// Retries up to MAX_RETRIES times on transient failures.
+// 429 → respects Retry-After header (capped at 60 s); 5xx → exponential backoff (1 s, 2 s).
+// 401/403 and other 4xx throw immediately without retrying.
+async function ouraget(token: string, path: string, params: URLSearchParams): Promise<unknown> {
   const qs = params.toString()
   // v8 ignore next -- buildParams always adds start_date so qs is never empty in practice
   const url = `${OURA_BASE}${path}${qs ? "?" + qs : ""}`
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (!res.ok) {
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+
+    if (res.ok) return res.json()
+
     const text = await res.text()
+
     // PATs expire every ~3 months — surface a fix-it message rather than a bare 401.
     if (res.status === 401 || res.status === 403) {
       throw new Error(
@@ -29,9 +37,22 @@ async function ouraget(token: string, path: string, params: URLSearchParams) {
           `Fix: generate a new PAT at https://cloud.ouraring.com/personal-access-tokens and rotate it with:\n    npx wrangler secret put OURA_API_TOKEN`,
       )
     }
+
+    // Retry on 429 (rate limited) and transient 5xx errors.
+    if ((res.status === 429 || res.status >= 500) && attempt < MAX_RETRIES) {
+      const delayMs =
+        res.status === 429
+          ? Math.min(parseInt(res.headers.get("Retry-After") ?? "60", 10) * 1_000, 60_000)
+          : 1_000 * 2 ** attempt // 1s, 2s
+      await new Promise<void>((r) => setTimeout(r, delayMs))
+      continue
+    }
+
     throw new Error(`Oura API error ${res.status}: ${text}`)
   }
-  return res.json()
+
+  // v8 ignore next -- loop always returns or throws before this
+  throw new Error("Oura API request failed after retries")
 }
 
 // Strip raw time-series arrays (met.items, class_5_min, sleep_phase_*, etc.)
