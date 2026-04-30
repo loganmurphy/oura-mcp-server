@@ -133,5 +133,48 @@ export const ACTIVITY_TOOLS: ToolDef[] = [
   },
 ]
 
-/** All tools on a single /mcp endpoint. */
+// Women's health tools are opt-in — only included when ENABLE_WOMENS_HEALTH=true.
+// These endpoints require the relevant features to be enabled on the user's Oura
+// account (cycle insights, reproductive health, or perimenopause tracking).
+// If the account doesn't have the feature, the Oura API returns an empty data array.
+export const WOMENS_HEALTH_TOOLS: ToolDef[] = [
+  {
+    name: "oura_cycle_insights",
+    description:
+      "Get daily menstrual cycle insights including cycle phase, predicted period start, and fertile window. " +
+      "The `day` field uses the calendar date. " +
+      "end_date is inclusive — the server adds +1 day when calling the Oura API. " +
+      "Requires cycle tracking to be enabled in the Oura app — returns empty data if not configured.",
+    inputSchema: {
+      type: "object",
+      properties: { ...DATE_RANGE_PROPS },
+    },
+  },
+  {
+    name: "oura_reproductive_health",
+    description:
+      "Get daily reproductive health data including basal body temperature (BBT) deviation and related cycle metrics. " +
+      "The `day` field uses the calendar date. " +
+      "end_date is inclusive — the server adds +1 day when calling the Oura API. " +
+      "Requires reproductive health tracking to be enabled in the Oura app — returns empty data if not configured.",
+    inputSchema: {
+      type: "object",
+      properties: { ...DATE_RANGE_PROPS },
+    },
+  },
+  {
+    name: "oura_perimenopause_health",
+    description:
+      "Get daily perimenopause health data including vasomotor symptoms, sleep disruption patterns, and hormonal trend indicators. " +
+      "The `day` field uses the calendar date. " +
+      "end_date is inclusive — the server adds +1 day when calling the Oura API. " +
+      "Requires perimenopause tracking to be enabled in the Oura app — returns empty data if not configured.",
+    inputSchema: {
+      type: "object",
+      properties: { ...DATE_RANGE_PROPS },
+    },
+  },
+]
+
+/** Base tools — always available on /mcp. */
 export const OURA_TOOLS: ToolDef[] = [...SLEEP_TOOLS, ...ACTIVITY_TOOLS]

@@ -21,6 +21,7 @@ function makeEnv(overrides?: Partial<OAuthHelpers>): Env {
     DB: {} as D1Database,
     OAUTH_KV: {} as KVNamespace,
     MCP_AUTH_PASSWORD: "correct-password",
+    ENABLE_WOMENS_HEALTH: "false",
     RATE_LIMITER: { limit: async () => ({ success: true }) } as Env["RATE_LIMITER"],
     OAUTH_PROVIDER: {
       parseAuthRequest: vi.fn().mockResolvedValue(FAKE_OAUTH_REQ),

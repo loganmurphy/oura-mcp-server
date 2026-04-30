@@ -25,7 +25,7 @@ import * as oura from "../oura"
 // Worker is the default export; handleMcp is exported for direct unit testing
 // (bypassing the OAuth wrapper which requires a real OAUTH_KV + valid Bearer token).
 import worker, { handleMcp } from "../index"
-import { OURA_TOOLS } from "../tools"
+import { OURA_TOOLS, WOMENS_HEALTH_TOOLS } from "../tools"
 import type { Env } from "../index"
 import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider"
 
@@ -35,6 +35,7 @@ function makeEnv(token = "test-token"): Env {
     DB: {} as D1Database,
     OAUTH_KV: {} as KVNamespace,
     MCP_AUTH_PASSWORD: "test-password",
+    ENABLE_WOMENS_HEALTH: "false",
     // Always allow in tests — rate limiting is tested via defaultHandler, not handleMcp.
     RATE_LIMITER: { limit: async () => ({ success: true }) } as Env["RATE_LIMITER"],
     // OAUTH_PROVIDER is injected by OAuthProvider at runtime; not needed for
@@ -185,7 +186,7 @@ describe("initialize", () => {
 })
 
 describe("tools/list", () => {
-  it("returns all 7 OURA_TOOLS on /mcp", async () => {
+  it("returns all 7 OURA_TOOLS on /mcp (women's health hidden by default)", async () => {
     const res = await post("/mcp", jsonRpc("tools/list"))
     const body = (await res.json()) as { result: { tools: Array<{ name: string }> } }
     const names = body.result.tools.map((t) => t.name)
@@ -193,9 +194,30 @@ describe("tools/list", () => {
     expect(names).toContain("oura_daily_activity")
     expect(names).toContain("oura_workouts")
     expect(names).toContain("oura_daily_stress")
-    expect(names).not.toContain("oura_personal_info")
-    expect(names).not.toContain("oura_heart_rate")
+    expect(names).not.toContain("oura_cycle_insights")
+    expect(names).not.toContain("oura_reproductive_health")
+    expect(names).not.toContain("oura_perimenopause_health")
     expect(body.result.tools).toHaveLength(7)
+  })
+
+  it("includes women's health tools when ENABLE_WOMENS_HEALTH=true", async () => {
+    const res = await handleMcp(
+      new Request("http://localhost/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: jsonRpc("tools/list"),
+      }),
+      makeEnv(),
+      makeCtx(),
+      [...OURA_TOOLS, ...WOMENS_HEALTH_TOOLS],
+      "oura-mcp-server",
+    )
+    const body = (await res.json()) as { result: { tools: Array<{ name: string }> } }
+    const names = body.result.tools.map((t) => t.name)
+    expect(names).toContain("oura_cycle_insights")
+    expect(names).toContain("oura_reproductive_health")
+    expect(names).toContain("oura_perimenopause_health")
+    expect(body.result.tools).toHaveLength(10)
   })
 })
 

@@ -131,9 +131,11 @@ Neither path writes to the cache.
 
 ### Tools
 
-All 7 tools are served from a single `/mcp` endpoint via `OURA_TOOLS` in `tools.ts` (a combined export of `SLEEP_TOOLS` + `ACTIVITY_TOOLS`). `McpApiHandler` calls `handleMcp` with `OURA_TOOLS` directly.
+The 7 base tools are served via `OURA_TOOLS` in `tools.ts` (`SLEEP_TOOLS` + `ACTIVITY_TOOLS`). Three opt-in women's health tools (`WOMENS_HEALTH_TOOLS`) are appended when `ENABLE_WOMENS_HEALTH=true` is set as a Worker secret (or in `.dev.vars` for local dev). `McpApiHandler.fetch()` builds the tool list dynamically before calling `handleMcp`.
 
-Adding a new tool: add the Oura fetch function in `oura.ts`, add the `ToolDef` to `SLEEP_TOOLS` or `ACTIVITY_TOOLS` in `tools.ts`, add a `case` in `fetchFromOura()` in `index.ts`, and add the tool name to `DATE_KEYED_TOOLS` if it returns per-day items.
+Adding a new tool: add the Oura fetch function in `oura.ts`, add the `ToolDef` to the appropriate array in `tools.ts`, add a `case` in `fetchFromOura()` in `index.ts`, and add the tool name to `DATE_KEYED_TOOLS`.
+
+**Women's health tools** are opt-in — controlled by the `ENABLE_WOMENS_HEALTH` env var. `pnpm bootstrap` and `pnpm connect-local` both prompt for this during setup. Requires the relevant features to be enabled in the Oura app (cycle insights, reproductive health, or perimenopause tracking) — returns empty data otherwise.
 
 ### Oura API
 
