@@ -8,6 +8,8 @@ A lightweight [Model Context Protocol](https://modelcontextprotocol.io) server t
 
 Tested with **Claude.ai (web), Claude Desktop, and Claude mobile** via `claude.ai/settings/connectors`. Any MCP client that supports OAuth 2.1 remote servers should work — though only Claude is officially tested and the bootstrap wizard targets Claude exclusively.
 
+Also available: [strava-mcp-server](https://github.com/loganmurphy/strava-mcp-server) — Strava activities, stats, and gear as MCP tools.
+
 ## Architecture
 
 ```
@@ -64,13 +66,11 @@ All clients connect to the same MCP endpoint. `pnpm bootstrap` copies this URL t
 https://oura-mcp-server.<your-subdomain>.workers.dev/mcp
 ```
 
-Customize → [Connectors](https://claude.ai/customize/connectors) → Add custom connector → paste URL → Connect → enter password → Authorize.
+Settings → [Connectors](https://claude.ai/settings/connectors) → Add custom connector → paste URL → Connect → enter password → Authorize.
 
 After connecting, click **Configure** on the Oura connector and set each tool to **Allow** — otherwise Claude may ask for permission on every use.
 
 > Setup must be done on [claude.ai](https://claude.ai) (web) — the mobile app doesn't support adding connectors. Once added via web, it's available across all Claude clients.
-
-`pnpm bootstrap` opens this page and copies the URL automatically.
 
 ---
 
@@ -96,7 +96,7 @@ pnpm dev             # terminal 1
 ngrok http 8787      # terminal 2 → https://xxxx.ngrok-free.app
 ```
 
-Add `<ngrok-url>/mcp` as a custom connector at `claude.ai/customize/connectors`.
+Add `<ngrok-url>/mcp` as a custom connector at `claude.ai/settings/connectors`.
 
 > Free tier URLs change on restart — re-add the connector in Claude when that happens.
 
@@ -225,13 +225,13 @@ echo "ENABLE_WOMENS_HEALTH=true" >> .dev.vars
 
 ### Third-party integrations
 
-Workouts synced to Oura from external apps (e.g. Strava) do not always appear in the Oura API — this is an upstream sync limitation, not a server issue. A dedicated Strava MCP server is coming soon.
+Workouts synced to Oura from external apps (e.g. Strava) do not always appear in the Oura API — this is an upstream sync limitation, not a server issue. For richer Strava data, see [strava-mcp-server](https://github.com/loganmurphy/strava-mcp-server).
 
 ---
 
 ## Troubleshooting
 
-**Tools not appearing** — remove and re-add the connector at `claude.ai/customize/connectors`; tool list refreshes on reconnect.
+**Tools not appearing** — remove and re-add the connector at `claude.ai/settings/connectors`; tool list refreshes on reconnect.
 
 **`OURA_API_TOKEN` not configured** — local: check `.dev.vars` and restart `pnpm dev`; production: `npx wrangler secret put OURA_API_TOKEN`.
 
