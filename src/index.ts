@@ -19,6 +19,7 @@ import { renderLoginPage, renderSuccessPage } from "./ui"
 export interface Env extends Cloudflare.Env {
   // Injected by OAuthProvider at request time:
   OAUTH_PROVIDER: OAuthHelpers
+  ENABLE_WOMENS_HEALTH: string
 }
 
 interface JsonRpcRequest {
